@@ -58,14 +58,21 @@ describeFn("indent-aware wrapping (real browser layout)", () => {
   });
 
   // A long, deeply-indented single line that is guaranteed to wrap several
-  // times inside the 260px box. Indent is 6 columns.
+  // times inside the 260px box. Indent is 6 columns. With no bracket/string
+  // structure, continuations fall in by the continuation indent (= tabSize 2)
+  // so they sit strictly past the line's first character.
   const INDENT = 6;
+  const CONT = 2;
   const longLine =
     " ".repeat(INDENT) + "const result = " + "value + ".repeat(30) + "end;";
 
-  async function measure(props: Record<string, unknown>, line = longLine) {
+  async function measure(
+    props: Record<string, unknown>,
+    line = longLine,
+    width = 260,
+  ) {
     const p = await browser.newPage();
-    await p.setContent(await page(line, props), { waitUntil: "load" });
+    await p.setContent(await page(line, props, width), { waitUntil: "load" });
     const result = await p.evaluate(() => {
       const cb = document.querySelector(".codebox") as HTMLElement;
       const content = document.querySelector(
@@ -121,8 +128,8 @@ describeFn("indent-aware wrapping (real browser layout)", () => {
       expect(left).toBeGreaterThan(first + 1);
     }
 
-    // ...by approximately INDENT character widths (Xcode-style alignment).
-    const expected = INDENT * m.chPx;
+    // ...by approximately INDENT + continuation indent (strictly-more rule).
+    const expected = (INDENT + CONT) * m.chPx;
     for (const left of continuations) {
       expect(Math.abs(left - first - expected)).toBeLessThan(m.chPx); // within 1ch
     }
@@ -133,7 +140,7 @@ describeFn("indent-aware wrapping (real browser layout)", () => {
     const m = await measure({ wrap: true, hangingIndent: extra });
     expect(m.rectCount).toBeGreaterThan(1);
     const delta = m.lefts[1]! - m.lefts[0]!;
-    const expected = (INDENT + extra) * m.chPx;
+    const expected = (INDENT + CONT + extra) * m.chPx;
     expect(Math.abs(delta - expected)).toBeLessThan(m.chPx);
   });
 
@@ -149,11 +156,28 @@ describeFn("indent-aware wrapping (real browser layout)", () => {
     const argsLine =
       prefix + "(" + Array.from({ length: 40 }, (_, i) => `arg${i}`).join(", ") + ")";
     const openCol = prefix.length; // 0-based column of '('
-    const m = await measure({ wrap: true }, argsLine);
+    // Wide box so the deep alignment isn't capped by --codebox-max-wrap.
+    const m = await measure({ wrap: true }, argsLine, 560);
     expect(m.rectCount).toBeGreaterThan(1);
     const expected = (openCol + 1) * m.chPx;
     for (const left of m.lefts.slice(1)) {
       expect(Math.abs(left - m.lefts[0]! - expected)).toBeLessThan(m.chPx);
     }
+  });
+
+  test("deep alignment is capped in a narrow box (no one-char-per-line)", async () => {
+    // '(' sits ~30 cols in; in a 260px box, aligning there would leave almost
+    // no width. The min() cap must keep the continuation usable.
+    const argsLine =
+      "const result = computeSomething(" +
+      Array.from({ length: 30 }, (_, i) => `argument${i}`).join(", ") +
+      ")";
+    const width = 260;
+    const m = await measure({ wrap: true }, argsLine, width);
+    const delta = m.lefts[1]! - m.lefts[0]!;
+    // Capped well under the box width (not the raw ~32ch alignment)...
+    expect(delta).toBeLessThan(0.72 * width);
+    // ...and it did not collapse into one character per visual line.
+    expect(m.rectCount).toBeLessThan(argsLine.length / 2);
   });
 });

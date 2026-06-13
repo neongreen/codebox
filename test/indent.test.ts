@@ -35,22 +35,21 @@ describe("leadingIndentWidth", () => {
 });
 
 describe("lineStyle (indent-aware wrapping)", () => {
-  test("wrap on: hanging indent equals the line indent", () => {
+  test("wrap on: hanging indent equals the line indent (capped)", () => {
     const s = lineStyle(4, 0, true);
     expect(s.whiteSpace).toBe("pre-wrap");
-    expect(s.paddingLeft).toBe("4ch");
-    expect(s.textIndent).toBe("-4ch");
+    expect(s.paddingLeft).toBe("min(4ch, var(--codebox-max-wrap, 66%))");
+    expect(s.textIndent).toBe("calc(-1 * min(4ch, var(--codebox-max-wrap, 66%)))");
   });
 
   test("wrap on: extra hanging indent is added on top of the indent", () => {
     const s = lineStyle(4, 2, true);
-    expect(s.paddingLeft).toBe("6ch");
-    expect(s.textIndent).toBe("-6ch");
+    expect(s.paddingLeft).toContain("6ch");
   });
 
-  test("padding and text-indent are equal-and-opposite so line 1 stays flush", () => {
-    // This is the core invariant: first visual line begins at column 0,
-    // wrapped continuations begin at `total`.
+  test("padding and text-indent reference the same capped value so line 1 stays flush", () => {
+    // The core invariant: first visual line begins at column 0 because
+    // text-indent negates padding-left exactly (whichever min() branch wins).
     for (const [indent, hang] of [
       [0, 0],
       [2, 0],
@@ -58,8 +57,9 @@ describe("lineStyle (indent-aware wrapping)", () => {
     ] as const) {
       const s = lineStyle(indent, hang, true);
       const total = indent + hang;
-      expect(s.paddingLeft).toBe(`${total}ch`);
-      expect(s.textIndent).toBe(`${-total}ch`);
+      const capped = `min(${total}ch, var(--codebox-max-wrap, 66%))`;
+      expect(s.paddingLeft).toBe(capped);
+      expect(s.textIndent).toBe(`calc(-1 * ${capped})`);
     }
   });
 

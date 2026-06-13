@@ -106,6 +106,7 @@ export async function highlightToLines(
   const lang = normalizeLang(options.lang);
   const theme = normalizeTheme(options.theme);
   const tabSize = options.tabSize ?? 2;
+  const continuationIndent = options.continuationIndent ?? tabSize;
 
   const hl = await getHighlighter();
   const result = hl.codeToTokens(code, {
@@ -131,7 +132,7 @@ export async function highlightToLines(
     return {
       text,
       indent,
-      layout: computeLineLayout(tokens, indent, tabSize),
+      layout: computeLineLayout(tokens, indent, tabSize, continuationIndent),
       tokens,
     };
   });

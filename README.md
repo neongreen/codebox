@@ -74,6 +74,7 @@ the raw code as plain text until it's ready, so there's never a blank flash.
 | `tokenStyles`         | `TokenStyles` | —                | per-kind style overrides: `{ comment?, string?, code? }`          |
 | `renderToken`         | `function`    | —                | escape hatch to fully control how a token renders                 |
 | `tabSize`             | `number`      | `2`              | columns a tab counts as when measuring indentation                |
+| `continuationIndent`  | `number`      | `tabSize`        | columns a continuation falls in by when alignment alone wouldn't put it past the line's first character |
 | `showLineNumbers`     | `boolean`     | `false`          | render a line-number gutter                                       |
 | `fallback`            | `ReactNode`   | plain code       | shown while the highlighter loads                                 |
 
@@ -115,7 +116,17 @@ line's own leading whitespace renders normally), while `padding-left` pushes
 every **wrapped** continuation line in to line up. `wrapIndent` is computed from
 the line's tokens: the column after the first opening bracket, the start of a
 string body, the start of comment text, or — failing those — the leading indent.
-Comment markers are repeated on wrapped lines via a small client-side overlay
+
+A hard rule underpins all of this: **a continuation is always indented strictly
+more than the line's first character.** Structural alignment usually satisfies
+it; when it wouldn't (a plain expression, or a line that is itself a string or
+comment body), the continuation falls in by `continuationIndent` columns so a
+wrap can never sit at or left of where the statement began.
+
+The hanging indent is capped at `--codebox-max-wrap` (default `66%` of the box)
+so a deep alignment in a narrow container degrades gracefully instead of wrapping
+one character per line. Comment markers are repeated on wrapped lines via a small
+client-side overlay
 (SSR renders the marker once; it's enhanced on mount). When `wrap` is off, lines
 use `white-space: pre` and the container scrolls horizontally.
 

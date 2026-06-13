@@ -70,6 +70,13 @@ export interface HighlightOptions {
   theme?: string;
   /** Columns a tab expands to when measuring indentation. Defaults to 2. */
   tabSize?: number;
+  /**
+   * Columns a wrapped continuation falls in by when structural alignment would
+   * otherwise put it at (or left of) the line's first character. Enforces the
+   * rule that continuations are always indented strictly more. Defaults to
+   * `tabSize`.
+   */
+  continuationIndent?: number;
 }
 
 /** Per-kind style overrides. Merged on top of the theme colors. */
@@ -118,6 +125,8 @@ export interface CodeBoxProps
   lang: string;
   theme?: string;
   tabSize?: number;
+  /** See {@link HighlightOptions.continuationIndent}. Defaults to `tabSize`. */
+  continuationIndent?: number;
   /** Rendered while the async highlighter loads. Defaults to plain code. */
   fallback?: ReactNode;
 }

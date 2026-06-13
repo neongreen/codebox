@@ -40,10 +40,16 @@ export function lineStyle(
     return { whiteSpace: "pre" };
   }
   const total = Math.max(0, indent + hangingIndent);
+  // Cap the hanging indent so a deep alignment can never starve the
+  // continuation of width (otherwise a deeply-nested call in a narrow box wraps
+  // one character per line). `--codebox-max-wrap` defaults to 66% of the box.
+  // padding-left and text-indent use the same capped value, so the first visual
+  // line still starts flush at column 0 regardless of which branch min() picks.
+  const capped = `min(${total}ch, var(--codebox-max-wrap, 66%))`;
   return {
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
-    paddingLeft: `${total}ch`,
-    textIndent: `${-total}ch`,
+    paddingLeft: capped,
+    textIndent: `calc(-1 * ${capped})`,
   };
 }

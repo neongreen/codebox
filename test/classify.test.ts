@@ -30,9 +30,11 @@ function layout(tokens: T[], tabSize = 2) {
 }
 
 describe("computeLineLayout: wrap alignment", () => {
-  test("falls back to leading indent with no structure", () => {
+  test("plain expression: continuation falls in past the leading indent", () => {
+    // leading indent 4, no structure -> 4 + continuationIndent(2) = 6,
+    // strictly greater than the first character's column.
     expect(layout([{ content: "    return value", kind: "code" }]).wrapIndent).toBe(
-      4,
+      6,
     );
   });
 
@@ -68,9 +70,23 @@ describe("computeLineLayout: wrap alignment", () => {
     expect(l.wrapIndent).toBe(6);
   });
 
-  test("no brackets -> leading indent", () => {
+  test("no brackets -> leading indent plus one level (strictly more)", () => {
     const l = layout([{ content: "    a + b + c", kind: "code" }]);
-    expect(l.wrapIndent).toBe(4);
+    expect(l.wrapIndent).toBe(6);
+  });
+
+  test("continuation is always strictly greater than the first char column", () => {
+    const cases: { content: string; kind: "code" | "string" | "comment" }[][] = [
+      [{ content: "x = y", kind: "code" }],
+      [{ content: "      deeplyIndented", kind: "code" }],
+      // a bare template-literal middle line (pure string body, no quote)
+      [{ content: "  more string text here", kind: "string" }],
+    ];
+    for (const toks of cases) {
+      const text = toks.map((t) => t.content).join("");
+      const lead = leadingIndentWidth(text, 2);
+      expect(layout(toks).wrapIndent).toBeGreaterThan(lead);
+    }
   });
 
   test("aligns string body under the opening quote", () => {

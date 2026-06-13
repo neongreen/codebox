@@ -270,6 +270,7 @@ export function CodeBox({
   lang,
   theme,
   tabSize,
+  continuationIndent,
   fallback,
   ...renderProps
 }: CodeBoxProps) {
@@ -277,7 +278,7 @@ export function CodeBox({
 
   useEffect(() => {
     let active = true;
-    highlightToLines(code, { lang, theme, tabSize })
+    highlightToLines(code, { lang, theme, tabSize, continuationIndent })
       .then((d) => {
         if (active) setData(d);
       })
@@ -287,7 +288,7 @@ export function CodeBox({
     return () => {
       active = false;
     };
-  }, [code, lang, theme, tabSize]);
+  }, [code, lang, theme, tabSize, continuationIndent]);
 
   if (!data) {
     return (

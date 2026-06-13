@@ -65,7 +65,9 @@ export function computeLineLayout(
   tokens: readonly KindedToken[],
   leadingIndent: number,
   tabSize = 2,
+  continuationIndent?: number,
 ): LineLayout {
+  const contIndent = continuationIndent ?? tabSize;
   // Flatten to characters carrying their kind and display column.
   const chars: { ch: string; kind: TokenKind; col: number }[] = [];
   let col = 0;
@@ -129,6 +131,15 @@ export function computeLineLayout(
   else if (stringContentCol !== undefined) wrapIndent = stringContentCol;
   else if (firstOpenCol >= 0) wrapIndent = firstOpenCol + 1;
   else wrapIndent = leadingIndent;
+
+  // Rule: a continuation must be indented strictly more than the line's first
+  // character. Structural alignment usually satisfies this already; when it
+  // doesn't (a plain expression, or a line that is itself string/comment body),
+  // fall the continuation in by one indent level so wraps never sit at or left
+  // of where the statement began.
+  if (wrapIndent <= leadingIndent) {
+    wrapIndent = leadingIndent + Math.max(1, contIndent);
+  }
 
   return { wrapIndent, comment, stringContentCol };
 }

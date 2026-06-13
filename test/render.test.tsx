@@ -22,11 +22,12 @@ describe("RenderedCode markup", () => {
     expect(html).toContain("color:");
   });
 
-  test("wrap on: indented line gets matching hanging-indent style", async () => {
-    // line 2 is indented 2 cols -> expect padding-left:2ch + text-indent:-2ch
+  test("wrap on: indented line continuation falls in past the indent", async () => {
+    // line 2 "  return 1;" is indented 2 cols, no structure -> continuation at
+    // 2 + continuationIndent(2) = 4 (strictly more than the first character).
     const html = await markup("function f() {\n  return 1;\n}", { wrap: true });
-    expect(html).toContain("padding-left:2ch");
-    expect(html).toContain("text-indent:-2ch");
+    expect(html).toContain("padding-left:min(4ch");
+    expect(html).toContain("text-indent:calc(-1 * min(4ch");
     expect(html).toContain("white-space:pre-wrap");
   });
 
@@ -89,6 +90,6 @@ describe("RenderedCode markup", () => {
   test("aligns wrapped continuations under function args (style reflects col)", async () => {
     // 'const r = f(a, b);' -> '(' at index 11, args at col 12
     const html = await markup("const r = f(a, b);", { wrap: true });
-    expect(html).toContain("padding-left:12ch");
+    expect(html).toContain("padding-left:min(12ch");
   });
 });
