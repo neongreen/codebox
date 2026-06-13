@@ -8,6 +8,13 @@ export {
 } from "./highlight";
 export { leadingIndentWidth, lineStyle } from "./indent";
 export {
+  classifyScopes,
+  computeLineLayout,
+  type CommentLayout,
+  type LineLayout,
+  type TokenKind,
+} from "./classify";
+export {
   LANG_ALIASES,
   SUPPORTED_LANGS,
   type CodeBoxProps,
@@ -17,4 +24,5 @@ export {
   type HighlightOptions,
   type RenderedCodeProps,
   type SupportedLang,
+  type TokenStyles,
 } from "./types";

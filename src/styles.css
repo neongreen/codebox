@@ -20,6 +20,27 @@
   -moz-tab-size: 2;
   font-variant-ligatures: none;
   text-rendering: optimizeLegibility;
+
+  /* Font used for the *contents* of string literals when proseStrings is on. */
+  --codebox-prose-font:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* String literal bodies rendered as proportional "prose" text blocks. */
+.codebox__tok--prose {
+  font-family: var(--codebox-prose-font);
+  /* Nudge so proportional text sits on the monospace baseline nicely. */
+  font-size: 0.96em;
+}
+
+/* Repeated comment markers overlaid on wrapped continuation lines. */
+.codebox__comment-marker {
+  pointer-events: none;
+  white-space: pre;
+  font-family: var(--codebox-font);
+  /* The content cell applies a negative text-indent for the hanging indent;
+     reset it here or the marker glyph would be pulled to the left margin. */
+  text-indent: 0;
 }
 
 .codebox__code {

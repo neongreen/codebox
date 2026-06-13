@@ -1,35 +1,47 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { CodeBox } from "../src/index";
 
 const THEMES = ["github-light", "github-dark"] as const;
+
+const COMMENT_STYLES: Record<string, CSSProperties | undefined> = {
+  default: undefined,
+  "muted italic": { fontStyle: "italic", opacity: 0.6 },
+  highlighted: {
+    background: "rgba(255, 213, 0, 0.18)",
+    borderRadius: "3px",
+    padding: "0 2px",
+  },
+  "red bold": { color: "#d1242f", fontWeight: 600 },
+};
+
+const FEATURED = `interface User {
+  id: number;
+  name: string;
+}
+
+// This is a long explanatory comment that will wrap when the box is narrow, and
+// when it does, the comment marker is repeated at the start of every line so it
+// keeps reading like a comment instead of dissolving into the indentation.
+export function greet(user: User): string {
+  const message = "Hello there, " + user.name + "! Welcome back. There is a lot of new stuff waiting for you to discover today, and we genuinely hope you enjoy all of it.";
+  return computeGreeting(message, user.id, { uppercase: false, exclaim: true, repeat: 2, locale: "en-US" });
+}`;
 
 const SAMPLES: { lang: string; label: string; code: string }[] = [
   {
     lang: "typescript",
     label: "TypeScript",
-    code: `interface User {
-  id: number;
-  name: string;
-}
-
-// A long string literal that would normally word-wrap into an ugly mess and
-// destroy the indentation of the code around it — watch what happens instead.
-export function greet(user: User): string {
-  const message = "Hello there, " + user.name + "! Welcome back to the application. We have missed you and there is a lot of new stuff waiting for you to discover today.";
-  return message;
-}`,
+    code: FEATURED,
   },
   {
     lang: "javascript",
     label: "JavaScript",
     code: `const numbers = [1, 2, 3, 4, 5];
 
-const doubled = numbers
-  .filter((n) => n % 2 === 1)
-  .map((n) => n * 2)
-  .reduce((acc, n) => acc + n, 0);
+// reduce the doubled odds down to a single delightful number
+const doubled = numbers.filter((n) => n % 2 === 1).map((n) => n * 2).reduce((acc, n) => acc + n, 0);
 
-console.log(\`The sum of the doubled odds is \${doubled} which is honestly a delightful little number to end on.\`);`,
+console.log(\`The sum of the doubled odds is \${doubled}, which is honestly a delightful little number to end on.\`);`,
   },
   {
     lang: "tsx",
@@ -48,7 +60,7 @@ console.log(\`The sum of the doubled odds is \${doubled} which is honestly a del
     label: "CSS",
     code: `.codebox {
   font-family: ui-monospace, monospace;
-  /* A comment long enough to wrap, kept aligned under its indentation rather than sprawling back to the left margin like a normal word-wrap would do. */
+  /* A comment long enough to wrap, kept aligned under its marker rather than sprawling back to the left margin like a normal word-wrap would do. */
   font-feature-settings: "liga" 0;
 }`,
   },
@@ -57,22 +69,18 @@ console.log(\`The sum of the doubled odds is \${doubled} which is honestly a del
     label: "JSON",
     code: `{
   "name": "@neongreen/codebox",
-  "private": false,
   "description": "A fairly long description value that wraps onto multiple visual lines while staying tucked under the opening quote instead of unindenting.",
-  "keywords": ["react", "shiki", "code"]
+  "keywords": ["react", "shiki", "code", "syntax", "wrapping", "indentation"]
 }`,
   },
   {
     lang: "yaml",
     label: "YAML",
     code: `name: codebox
-on:
-  push:
-    branches: [main]
 jobs:
   test:
     runs-on: ubuntu-latest
-    # This trailing comment is long on purpose to show indent-preserving wrap.
+    # This trailing comment is long on purpose to show the indent-preserving wrap and repeated marker behaviour in YAML too.
     steps:
       - run: bun test`,
   },
@@ -86,11 +94,24 @@ const x =`;
 export function App() {
   const [theme, setTheme] = useState<(typeof THEMES)[number]>("github-light");
   const [wrap, setWrap] = useState(true);
-  const [hangingIndent, setHangingIndent] = useState(0);
+  const [proseStrings, setProseStrings] = useState(true);
+  const [repeatCommentMarker, setRepeatCommentMarker] = useState(true);
   const [showLineNumbers, setShowLineNumbers] = useState(false);
+  const [commentStyle, setCommentStyle] = useState("default");
+  const [hangingIndent, setHangingIndent] = useState(0);
   const [width, setWidth] = useState(440);
 
   const dark = theme === "github-dark";
+
+  const shared = {
+    theme,
+    wrap,
+    proseStrings,
+    repeatCommentMarker,
+    showLineNumbers,
+    hangingIndent,
+    tokenStyles: { comment: COMMENT_STYLES[commentStyle] },
+  };
 
   return (
     <div className={dark ? "page page--dark" : "page"}>
@@ -100,8 +121,9 @@ export function App() {
         </h1>
         <p className="tagline">
           Xcode-style React code blocks. Shiki highlighting,{" "}
-          <strong>indent-aware soft wrapping</strong>, and it never chokes on
-          malformed syntax.
+          <strong>structure-aware soft wrapping</strong>, proportional string
+          bodies, repeated comment markers — and it never chokes on malformed
+          syntax.
         </p>
         <p className="install">
           <code>bun add @neongreen/codebox</code>
@@ -138,10 +160,39 @@ export function App() {
         <label className="check">
           <input
             type="checkbox"
+            checked={proseStrings}
+            onChange={(e) => setProseStrings(e.target.checked)}
+          />
+          Prose strings
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={repeatCommentMarker}
+            onChange={(e) => setRepeatCommentMarker(e.target.checked)}
+          />
+          Repeat comment marker
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
             checked={showLineNumbers}
             onChange={(e) => setShowLineNumbers(e.target.checked)}
           />
           Line numbers
+        </label>
+        <label>
+          Comment style
+          <select
+            value={commentStyle}
+            onChange={(e) => setCommentStyle(e.target.value)}
+          >
+            {Object.keys(COMMENT_STYLES).map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           Hanging indent: {hangingIndent}
@@ -167,21 +218,32 @@ export function App() {
 
       <main>
         <section className="featured">
-          <h2>The headline trick</h2>
+          <h2>Everything at once</h2>
           <p>
-            Drag the <strong>width</strong> slider down. The long string literal
-            and comments wrap, but every continuation line stays lined up under
-            the code — indentation is never destroyed. Toggle{" "}
-            <strong>soft wrap</strong> off to compare with horizontal scrolling.
+            Drag <strong>width</strong> down. The string body wraps as
+            proportional prose under the opening quote, the comment repeats its{" "}
+            <code>//</code> marker per line, and the <code>computeGreeting(…)</code>{" "}
+            call keeps its arguments aligned under the first one. Toggle anything
+            above to compare.
+          </p>
+          <div className="featured-box" style={{ maxWidth: width }}>
+            <CodeBox code={FEATURED} lang="typescript" {...shared} />
+          </div>
+        </section>
+
+        <section>
+          <h2>Indentation that survives word-wrap, everywhere</h2>
+          <p>
+            Not just leading whitespace — function arguments, array and object
+            literals, string bodies, and comments all keep their alignment when
+            a long line wraps.
           </p>
           <div className="featured-box" style={{ maxWidth: width }}>
             <CodeBox
-              code={SAMPLES[0]!.code}
+              code={`const result = computeSomething(firstArgument, secondArgument, thirdArgument, fourthArgument, fifthArgument);
+const config = { enabled: true, retries: 3, timeout: 30000, backoff: "exponential", labels: ["a", "b", "c"] };`}
               lang="typescript"
-              theme={theme}
-              wrap={wrap}
-              hangingIndent={hangingIndent}
-              showLineNumbers={showLineNumbers}
+              {...shared}
             />
           </div>
         </section>
@@ -192,14 +254,7 @@ export function App() {
             {SAMPLES.map((s) => (
               <figure key={s.lang} className="cell" style={{ maxWidth: width }}>
                 <figcaption>{s.label}</figcaption>
-                <CodeBox
-                  code={s.code}
-                  lang={s.lang}
-                  theme={theme}
-                  wrap={wrap}
-                  hangingIndent={hangingIndent}
-                  showLineNumbers={showLineNumbers}
-                />
+                <CodeBox code={s.code} lang={s.lang} {...shared} />
               </figure>
             ))}
           </div>
@@ -213,14 +268,7 @@ export function App() {
             never throws.
           </p>
           <div className="featured-box" style={{ maxWidth: width }}>
-            <CodeBox
-              code={MALFORMED}
-              lang="typescript"
-              theme={theme}
-              wrap={wrap}
-              hangingIndent={hangingIndent}
-              showLineNumbers={showLineNumbers}
-            />
+            <CodeBox code={MALFORMED} lang="typescript" {...shared} />
           </div>
         </section>
       </main>

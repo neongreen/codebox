@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import type { LineLayout, TokenKind } from "./classify";
 
 /** Languages codebox ships with grammars for out of the box. */
 export const SUPPORTED_LANGS = [
@@ -36,14 +37,18 @@ export interface CodeToken {
   bgColor?: string;
   /** Shiki font-style bitmask: 1=italic, 2=bold, 4=underline. */
   fontStyle?: number;
+  /** Coarse classification from TextMate scopes: code / string / comment. */
+  kind: TokenKind;
 }
 
-/** One source line, decomposed into tokens plus its measured indentation. */
+/** One source line, decomposed into tokens plus its measured layout. */
 export interface CodeLine {
   /** The raw text of the line (no trailing newline). */
   text: string;
   /** Leading-indent width in columns (tabs expanded to tabSize). */
   indent: number;
+  /** Structural wrap/alignment info for this line. */
+  layout: LineLayout;
   tokens: CodeToken[];
 }
 
@@ -67,17 +72,42 @@ export interface HighlightOptions {
   tabSize?: number;
 }
 
+/** Per-kind style overrides. Merged on top of the theme colors. */
+export interface TokenStyles {
+  comment?: CSSProperties;
+  string?: CSSProperties;
+  code?: CSSProperties;
+}
+
 export interface RenderedCodeProps {
   data: HighlightedCode;
   /**
    * Soft-wrap long lines instead of scrolling horizontally. Default true.
    * When wrapping, continuation lines are indented to line up under the
    * code (Xcode-style indent-aware wrapping) rather than resetting to col 0.
+   * Alignment follows structure: function args align under the first arg,
+   * string bodies under the opening quote, comments under the comment text.
    */
   wrap?: boolean;
   /** Extra columns added to wrapped continuation lines. Default 0. */
   hangingIndent?: number;
   showLineNumbers?: boolean;
+  /**
+   * Render the *contents* of string literals in a proportional ("prose") font
+   * so long strings read like aligned text blocks. Code stays monospace.
+   * Default true.
+   */
+  proseStrings?: boolean;
+  /**
+   * When a line comment wraps, repeat its marker (//, #, …) at the start of
+   * each continuation line. Client-side enhancement (needs layout). Default
+   * true.
+   */
+  repeatCommentMarker?: boolean;
+  /** Inline style overrides per token kind (comment/string/code). */
+  tokenStyles?: TokenStyles;
+  /** Escape hatch: fully control how a token renders. */
+  renderToken?: (token: CodeToken, index: number) => ReactNode;
   className?: string;
   style?: CSSProperties;
 }

@@ -1,7 +1,8 @@
 # codebox
 
-Xcode-style code blocks for React. Shiki syntax highlighting, **indent-aware
-soft wrapping**, and it never chokes on malformed syntax.
+Xcode-style code blocks for React. Shiki syntax highlighting, **structure-aware
+soft wrapping**, proportional string bodies, repeated comment markers — and it
+never chokes on malformed syntax.
 
 **[Live demo →](https://neongreen.github.io/codebox/)**
 
@@ -13,14 +14,31 @@ bun add @neongreen/codebox
 
 Most code-block components word-wrap long lines back to column 0, which shreds
 the indentation and makes wrapped code (and long string literals) hard to read.
-codebox borrows the trick real editors like Xcode use: when a line wraps, the
-continuation lines stay lined up **under the code** instead of resetting to the
-left margin. Indentation survives.
+codebox borrows the trick real editors use: when a line wraps, continuation
+lines stay lined up **under the code** instead of resetting to the left margin.
 
-It also tolerates broken input. Highlighting runs through Shiki's TextMate
-tokenizer — a lexer, not a parser — so unterminated strings, mismatched braces,
-and half-typed expressions highlight what they can and render the rest verbatim.
-It never throws.
+But it goes further than leading whitespace. codebox reads each line's structure
+from the syntax tokens, so wrapping is preserved for **every indented
+situation**:
+
+- **Function arguments / arrays / objects** — wrapped continuations align under
+  the first argument (just inside the opening bracket).
+- **String bodies** — long string literals wrap as proportional "prose" text,
+  aligned under the opening quote, so they read like text blocks instead of a
+  ragged monospace mess.
+- **Comments** — wrapped comments align under the comment text, and the marker
+  (`//`, `#`, `/*`, …) is repeated at the start of every continuation line so it
+  keeps reading like a comment.
+
+It also tolerates broken input. Classification and highlighting run through
+Shiki's TextMate tokenizer — a lexer, not a parser — so unterminated strings,
+mismatched braces, and half-typed expressions highlight what they can and render
+the rest verbatim. It never throws.
+
+> **On "tree-sitter":** the structure (which spans are strings, comments,
+> brackets) comes from real TextMate scopes via Shiki, not regex hacks and not a
+> separate tree-sitter wasm grammar. Same robustness on malformed input, far
+> lighter to ship.
 
 ## Usage
 
@@ -46,14 +64,18 @@ the raw code as plain text until it's ready, so there's never a blank flash.
 
 | prop              | type                       | default          | notes                                                              |
 | ----------------- | -------------------------- | ---------------- | ------------------------------------------------------------------ |
-| `code`            | `string`                   | —                | source to render                                                   |
-| `lang`            | `string`                   | —                | `typescript`, `javascript`, `tsx`, `jsx`, `css`, `json`, `yaml` (+ aliases like `ts`, `js`, `yml`) |
-| `theme`           | `string`                   | `"github-light"` | any Shiki theme name                                               |
-| `wrap`            | `boolean`                  | `true`           | soft-wrap with indent-aware hanging indent; `false` = scroll       |
-| `hangingIndent`   | `number`                   | `0`              | extra columns added to wrapped continuation lines                  |
-| `tabSize`         | `number`                   | `2`              | columns a tab counts as when measuring indentation                 |
-| `showLineNumbers` | `boolean`                  | `false`          | render a line-number gutter                                        |
-| `fallback`        | `ReactNode`                | plain code       | shown while the highlighter loads                                  |
+| `code`                | `string`      | —                | source to render                                                   |
+| `lang`                | `string`      | —                | `typescript`, `javascript`, `tsx`, `jsx`, `css`, `json`, `yaml` (+ aliases like `ts`, `js`, `yml`) |
+| `theme`               | `string`      | `"github-light"` | `github-light` or `github-dark` (bundled)                         |
+| `wrap`                | `boolean`     | `true`           | structure-aware soft wrap; `false` = horizontal scroll            |
+| `hangingIndent`       | `number`      | `0`              | extra columns added to wrapped continuation lines                 |
+| `proseStrings`        | `boolean`     | `true`           | render string-literal bodies in a proportional font               |
+| `repeatCommentMarker` | `boolean`     | `true`           | repeat `//` / `#` / `/*` at the start of each wrapped comment line |
+| `tokenStyles`         | `TokenStyles` | —                | per-kind style overrides: `{ comment?, string?, code? }`          |
+| `renderToken`         | `function`    | —                | escape hatch to fully control how a token renders                 |
+| `tabSize`             | `number`      | `2`              | columns a tab counts as when measuring indentation                |
+| `showLineNumbers`     | `boolean`     | `false`          | render a line-number gutter                                       |
+| `fallback`            | `ReactNode`   | plain code       | shown while the highlighter loads                                 |
 
 ### Pre-highlight for SSR
 
@@ -68,15 +90,34 @@ const data = await highlightToLines(code, { lang: "typescript" });
 <RenderedCode data={data} wrap hangingIndent={2} />;
 ```
 
-## How indent-aware wrapping works
+## Customizing comments and strings
 
-Each line gets a CSS hanging indent of `indent + hangingIndent` columns: a
+Style by kind with `tokenStyles`, or target the CSS classes
+(`.codebox__tok--comment`, `.codebox__tok--string`) directly:
+
+```tsx
+<CodeBox
+  code={code}
+  lang="ts"
+  tokenStyles={{ comment: { fontStyle: "italic", opacity: 0.6 } }}
+/>
+```
+
+The proportional font for string bodies is the `--codebox-prose-font` CSS
+variable — override it to whatever you like. For total control, `renderToken`
+lets you replace token rendering entirely.
+
+## How structure-aware wrapping works
+
+Each line gets a CSS hanging indent of `wrapIndent + hangingIndent` columns: a
 negative `text-indent` pulls the **first** visual line back to column 0 (so the
 line's own leading whitespace renders normally), while `padding-left` pushes
-every **wrapped** continuation line in to line up under the code. With
-`hangingIndent: 0` the wrap aligns exactly under the first non-whitespace
-character. When `wrap` is off, lines use `white-space: pre` and the container
-scrolls horizontally.
+every **wrapped** continuation line in to line up. `wrapIndent` is computed from
+the line's tokens: the column after the first opening bracket, the start of a
+string body, the start of comment text, or — failing those — the leading indent.
+Comment markers are repeated on wrapped lines via a small client-side overlay
+(SSR renders the marker once; it's enhanced on mount). When `wrap` is off, lines
+use `white-space: pre` and the container scrolls horizontally.
 
 ## Supported languages
 
@@ -86,9 +127,9 @@ grammars for hundreds.
 
 ## Roadmap
 
-- **Proportional string-literal blocks** — render the inside of string literals
-  as nicely-wrapped proportional text while code stays monospace (the planned
-  headline feature; will use tree-sitter to locate string nodes robustly).
+- **Justified prose blocks** — optional full justification / measured reflow of
+  string and comment bodies so they form clean rectangular text blocks.
+- More bundled themes (currently `github-light` / `github-dark`).
 
 ## Development
 

@@ -1,5 +1,6 @@
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import { createOnigurumaEngine } from "shiki/engine/oniguruma";
+import { classifyScopes, computeLineLayout } from "./classify";
 import { leadingIndentWidth } from "./indent";
 import {
   LANG_ALIASES,
@@ -56,9 +57,10 @@ export function getHighlighter(): Promise<HighlighterCore> {
     corePromise = createHighlighterCore({
       themes: Object.values(THEME_OBJECTS),
       langs: Object.values(BUNDLED_LANGS),
-      // forgiving: don't throw on grammar patterns the JS engine can't model,
-      // which also keeps malformed input from blowing up.
-      engine: createJavaScriptRegexEngine({ forgiving: true }),
+      // Oniguruma engine: needed for per-token scope explanations, which drive
+      // string/comment/bracket classification. TextMate tokenizing never throws
+      // on malformed input.
+      engine: createOnigurumaEngine(import("shiki/wasm")),
     });
   }
   return corePromise;
@@ -106,19 +108,31 @@ export async function highlightToLines(
   const tabSize = options.tabSize ?? 2;
 
   const hl = await getHighlighter();
-  const result = hl.codeToTokens(code, { lang, theme });
+  const result = hl.codeToTokens(code, {
+    lang,
+    theme,
+    includeExplanation: "scopeName",
+  });
 
   const lines: CodeLine[] = result.tokens.map((lineTokens) => {
     const text = lineTokens.map((t) => t.content).join("");
-    return {
-      text,
-      indent: leadingIndentWidth(text, tabSize),
-      tokens: lineTokens.map((t) => ({
+    const tokens = lineTokens.map((t) => {
+      const scopes =
+        t.explanation?.flatMap((e) => e.scopes.map((s) => s.scopeName)) ?? [];
+      return {
         content: t.content,
         color: t.color,
         bgColor: t.bgColor,
         fontStyle: t.fontStyle,
-      })),
+        kind: classifyScopes(scopes),
+      };
+    });
+    const indent = leadingIndentWidth(text, tabSize);
+    return {
+      text,
+      indent,
+      layout: computeLineLayout(tokens, indent, tabSize),
+      tokens,
     };
   });
 

@@ -56,4 +56,39 @@ describe("RenderedCode markup", () => {
     const html = await markup("const x = 1", { lang: "ts" });
     expect(html).toContain('data-codebox-lang="typescript"');
   });
+
+  test("string tokens get prose class by default; opt out with proseStrings", async () => {
+    const on = await markup(`const s = "hi";`);
+    expect(on).toContain("codebox__tok--string");
+    expect(on).toContain("codebox__tok--prose");
+    const off = await markup(`const s = "hi";`, { proseStrings: false });
+    expect(off).toContain("codebox__tok--string");
+    expect(off).not.toContain("codebox__tok--prose");
+  });
+
+  test("comment tokens get a comment class", async () => {
+    const html = await markup("// hello\nconst x = 1");
+    expect(html).toContain("codebox__tok--comment");
+  });
+
+  test("tokenStyles overrides per kind", async () => {
+    const html = await markup("// hi\nx", {
+      tokenStyles: { comment: { fontStyle: "italic", opacity: 0.5 } },
+    });
+    expect(html).toContain("opacity:0.5");
+  });
+
+  test("renderToken escape hatch fully controls token output", async () => {
+    const html = await markup("const x = 1", {
+      renderToken: (t: { content: string }) => t.content.toUpperCase(),
+    });
+    expect(html).toContain("CONST");
+    expect(html).not.toContain("codebox__tok");
+  });
+
+  test("aligns wrapped continuations under function args (style reflects col)", async () => {
+    // 'const r = f(a, b);' -> '(' at index 11, args at col 12
+    const html = await markup("const r = f(a, b);", { wrap: true });
+    expect(html).toContain("padding-left:12ch");
+  });
 });

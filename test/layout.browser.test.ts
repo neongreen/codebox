@@ -24,7 +24,11 @@ const stylesCss = await Bun.file(
   new URL("../src/styles.css", import.meta.url),
 ).text();
 
-async function page(code: string, props: Record<string, unknown>) {
+async function page(
+  code: string,
+  props: Record<string, unknown>,
+  width = 260,
+) {
   const data = await highlightToLines(code, { lang: "typescript" });
   const markup = renderToStaticMarkup(
     createElement(RenderedCode, { data, ...props }),
@@ -32,7 +36,7 @@ async function page(code: string, props: Record<string, unknown>) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     ${stylesCss}
     body { margin: 0; }
-    .codebox { width: 260px; font-size: 13px; padding: 0; border-radius: 0; }
+    .codebox { width: ${width}px; font-size: 13px; padding: 0; border-radius: 0; }
   </style></head><body>${markup}</body></html>`;
 }
 
@@ -59,9 +63,9 @@ describeFn("indent-aware wrapping (real browser layout)", () => {
   const longLine =
     " ".repeat(INDENT) + "const result = " + "value + ".repeat(30) + "end;";
 
-  async function measure(props: Record<string, unknown>) {
+  async function measure(props: Record<string, unknown>, line = longLine) {
     const p = await browser.newPage();
-    await p.setContent(await page(longLine, props), { waitUntil: "load" });
+    await p.setContent(await page(line, props), { waitUntil: "load" });
     const result = await p.evaluate(() => {
       const cb = document.querySelector(".codebox") as HTMLElement;
       const content = document.querySelector(
@@ -136,5 +140,20 @@ describeFn("indent-aware wrapping (real browser layout)", () => {
   test("wrap off: the line does not wrap (single fragment)", async () => {
     const m = await measure({ wrap: false });
     expect(m.rectCount).toBe(1);
+  });
+
+  test("function arguments stay aligned under the first arg when wrapped", async () => {
+    // A balanced but long call. '(' is at index `prefix.length`; args align
+    // one column further in.
+    const prefix = "const result = compute";
+    const argsLine =
+      prefix + "(" + Array.from({ length: 40 }, (_, i) => `arg${i}`).join(", ") + ")";
+    const openCol = prefix.length; // 0-based column of '('
+    const m = await measure({ wrap: true }, argsLine);
+    expect(m.rectCount).toBeGreaterThan(1);
+    const expected = (openCol + 1) * m.chPx;
+    for (const left of m.lefts.slice(1)) {
+      expect(Math.abs(left - m.lefts[0]! - expected)).toBeLessThan(m.chPx);
+    }
   });
 });
