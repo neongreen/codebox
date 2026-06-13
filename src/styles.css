@@ -1,0 +1,66 @@
+/* codebox default styles. Import once: `import "@neongreen/codebox/styles.css"`. */
+
+.codebox {
+  --codebox-font:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --codebox-font-size: 13px;
+  --codebox-line-height: 1.5;
+  --codebox-padding: 14px 16px;
+  --codebox-radius: 8px;
+  --codebox-gutter: 2.5em;
+
+  font-family: var(--codebox-font);
+  font-size: var(--codebox-font-size);
+  line-height: var(--codebox-line-height);
+  margin: 0;
+  padding: var(--codebox-padding);
+  border-radius: var(--codebox-radius);
+  tab-size: 2;
+  -moz-tab-size: 2;
+  font-variant-ligatures: none;
+  text-rendering: optimizeLegibility;
+}
+
+.codebox__code {
+  display: block;
+  font: inherit;
+}
+
+.codebox__line {
+  display: flex;
+  align-items: flex-start;
+}
+
+.codebox--scroll {
+  overflow-x: auto;
+}
+
+/* The content cell carries the per-line hanging indent (set inline). */
+.codebox__content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.codebox--scroll .codebox__content {
+  flex: 0 0 auto;
+}
+
+.codebox__ln {
+  flex: 0 0 var(--codebox-gutter);
+  text-align: right;
+  padding-right: 1em;
+  opacity: 0.4;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Plain fallback shown before the async highlighter resolves. */
+.codebox--plain {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.codebox--plain .codebox__code {
+  white-space: inherit;
+}
