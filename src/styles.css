@@ -21,6 +21,12 @@
   font-variant-ligatures: none;
   text-rendering: optimizeLegibility;
 
+  /* Disable mobile font-boosting. Without this, browsers re-run text
+     auto-sizing after a reflow (e.g. toggling an option) and can inflate the
+     code to a different size each time. */
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+
   /* Establish a query container so the wrap cap (66cqw) is relative to the
      codebox's own width. */
   container-type: inline-size;
@@ -30,11 +36,12 @@
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-/* String literal bodies rendered as proportional "prose" text blocks.
-   Same font-size as the code (the fixed line-height keeps line boxes uniform),
-   so toggling proseStrings never changes text size. */
+/* String literal bodies rendered as proportional "prose" text blocks, a touch
+   smaller than the code. The fixed line-height keeps line boxes uniform, so the
+   smaller strings don't change row heights. Tune with --codebox-prose-font-size. */
 .codebox__tok--prose {
   font-family: var(--codebox-prose-font);
+  font-size: var(--codebox-prose-font-size, 0.9em);
 }
 
 /* Repeated comment markers overlaid on wrapped continuation lines. */
