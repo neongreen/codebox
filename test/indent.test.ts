@@ -38,8 +38,10 @@ describe("lineStyle (indent-aware wrapping)", () => {
   test("wrap on: hanging indent equals the line indent (capped)", () => {
     const s = lineStyle(4, 0, true);
     expect(s.whiteSpace).toBe("pre-wrap");
-    expect(s.paddingLeft).toBe("min(4ch, var(--codebox-max-wrap, 66%))");
-    expect(s.textIndent).toBe("calc(-1 * min(4ch, var(--codebox-max-wrap, 66%)))");
+    expect(s.paddingLeft).toBe("min(4ch, var(--codebox-max-wrap, 66cqw))");
+    expect(s.textIndent).toBe(
+      "calc(-1 * min(4ch, var(--codebox-max-wrap, 66cqw)))",
+    );
   });
 
   test("wrap on: extra hanging indent is added on top of the indent", () => {
@@ -57,7 +59,7 @@ describe("lineStyle (indent-aware wrapping)", () => {
     ] as const) {
       const s = lineStyle(indent, hang, true);
       const total = indent + hang;
-      const capped = `min(${total}ch, var(--codebox-max-wrap, 66%))`;
+      const capped = `min(${total}ch, var(--codebox-max-wrap, 66cqw))`;
       expect(s.paddingLeft).toBe(capped);
       expect(s.textIndent).toBe(`calc(-1 * ${capped})`);
     }

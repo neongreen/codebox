@@ -42,10 +42,13 @@ export function lineStyle(
   const total = Math.max(0, indent + hangingIndent);
   // Cap the hanging indent so a deep alignment can never starve the
   // continuation of width (otherwise a deeply-nested call in a narrow box wraps
-  // one character per line). `--codebox-max-wrap` defaults to 66% of the box.
-  // padding-left and text-indent use the same capped value, so the first visual
-  // line still starts flush at column 0 regardless of which branch min() picks.
-  const capped = `min(${total}ch, var(--codebox-max-wrap, 66%))`;
+  // one character per line). The cap is a *length* (container-query width unit,
+  // not a percentage): a percentage resolves against different bases for
+  // padding-left vs text-indent, which would stop them cancelling and push the
+  // first line out of flush. With a length, both resolve identically, so the
+  // first visual line always starts at column 0. `--codebox-max-wrap` defaults
+  // to 66cqw (66% of the codebox's own inline size).
+  const capped = `min(${total}ch, var(--codebox-max-wrap, 66cqw))`;
   return {
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",

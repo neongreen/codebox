@@ -21,16 +21,20 @@
   font-variant-ligatures: none;
   text-rendering: optimizeLegibility;
 
+  /* Establish a query container so the wrap cap (66cqw) is relative to the
+     codebox's own width. */
+  container-type: inline-size;
+
   /* Font used for the *contents* of string literals when proseStrings is on. */
   --codebox-prose-font:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-/* String literal bodies rendered as proportional "prose" text blocks. */
+/* String literal bodies rendered as proportional "prose" text blocks.
+   Same font-size as the code (the fixed line-height keeps line boxes uniform),
+   so toggling proseStrings never changes text size. */
 .codebox__tok--prose {
   font-family: var(--codebox-prose-font);
-  /* Nudge so proportional text sits on the monospace baseline nicely. */
-  font-size: 0.96em;
 }
 
 /* Repeated comment markers overlaid on wrapped continuation lines. */
@@ -48,27 +52,33 @@
   font: inherit;
 }
 
+/* Each line is a block (NOT a flex item): the per-line hanging indent uses
+   padding-left + a negating text-indent, and percentage values (the wrap cap)
+   only resolve consistently between those two properties on a normal block.
+   On a flex item they resolve against different widths and the first line stops
+   being flush. */
 .codebox__line {
-  display: flex;
-  align-items: flex-start;
+  display: block;
+  position: relative;
+}
+
+.codebox--numbered .codebox__line {
+  padding-left: var(--codebox-gutter);
 }
 
 .codebox--scroll {
   overflow-x: auto;
 }
 
-/* The content cell carries the per-line hanging indent (set inline). */
+/* The content block carries the per-line hanging indent (set inline). */
 .codebox__content {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.codebox--scroll .codebox__content {
-  flex: 0 0 auto;
+  display: block;
 }
 
 .codebox__ln {
-  flex: 0 0 var(--codebox-gutter);
+  position: absolute;
+  left: 0;
+  width: var(--codebox-gutter);
   text-align: right;
   padding-right: 1em;
   opacity: 0.4;
