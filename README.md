@@ -4,7 +4,8 @@ Xcode-style code blocks for React. Shiki syntax highlighting, **structure-aware
 soft wrapping**, proportional string bodies, repeated comment markers — and it
 never chokes on malformed syntax.
 
-**[Live demo →](https://neongreen.github.io/codebox/)**
+**[Live demo & examples →](https://neongreen.github.io/codebox/)** — every
+language, plus diverse real-world snippets showing the wrapping in action.
 
 ```bash
 bun add @neongreen/codebox
@@ -123,7 +124,8 @@ it; when it wouldn't (a plain expression, or a line that is itself a string or
 comment body), the continuation falls in by `continuationIndent` columns so a
 wrap can never sit at or left of where the statement began.
 
-The hanging indent is capped at `--codebox-max-wrap` (default `66%` of the box)
+The hanging indent is capped at `--codebox-max-wrap` (default `66cqw`, i.e. 66%
+of the box's own inline size)
 so a deep alignment in a narrow container degrades gracefully instead of wrapping
 one character per line. Comment markers are repeated on wrapped lines via a small
 client-side overlay

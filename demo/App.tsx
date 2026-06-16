@@ -56,6 +56,17 @@ console.log(\`The sum of the doubled odds is \${doubled}, which is honestly a de
 }`,
   },
   {
+    lang: "jsx",
+    label: "JSX",
+    code: `function Toolbar({ onSave }) {
+  return (
+    <nav className="toolbar">
+      <button type="button" onClick={onSave} title="Save the current document to disk before you lose it">Save</button>
+    </nav>
+  );
+}`,
+  },
+  {
     lang: "css",
     label: "CSS",
     code: `.codebox {
@@ -83,6 +94,48 @@ jobs:
     # This trailing comment is long on purpose to show the indent-preserving wrap and repeated marker behaviour in YAML too.
     steps:
       - run: bun test`,
+  },
+];
+
+// A grab-bag of real-world snippets that each exercise the wrapping in a
+// different way: nested data, chained calls, dense type signatures, prop-heavy
+// JSX, deep config.
+const MORE_SAMPLES: { lang: string; label: string; code: string }[] = [
+  {
+    lang: "json",
+    label: "Nested data with long string values",
+    code: `{
+  "posts": [
+    { "href": "/news/plugins-everywhere", "title": "Plugins, Everywhere", "summary": "Plugin UI is now available on the web, and synced with your TUI so your setup follows you across every device." },
+    { "href": "/news/drop-the-neo", "title": "Drop the Neo", "summary": "Amp Neo is now simply Amp. The rebuilt editor is available to everyone starting today." }
+  ]
+}`,
+  },
+  {
+    lang: "typescript",
+    label: "Chained calls + nested objects",
+    code: `const summary = await fetchPosts({ limit: 20, since: "2026-01-01" }).then((posts) => posts.filter((p) => p.published).map((p) => ({ id: p.id, title: p.title.toUpperCase() })));`,
+  },
+  {
+    lang: "typescript",
+    label: "Dense type signature",
+    code: `type RequestHandler<T extends Request = Request> = (request: T, context: { signal: AbortSignal; retries: number; headers: Record<string, string> }) => Promise<Response> | Response;`,
+  },
+  {
+    lang: "tsx",
+    label: "Prop-heavy JSX element",
+    code: `<VideoPlayer src="/media/intro.mp4" autoPlay={false} controls loop muted poster="/media/poster.jpg" onPlay={handlePlay} onEnded={handleEnded} className="hero-video rounded-xl shadow-lg" />`,
+  },
+  {
+    lang: "yaml",
+    label: "Deeply nested config",
+    code: `services:
+  web:
+    image: ghcr.io/neongreen/codebox-demo:latest
+    environment:
+      DESCRIPTION: "A long environment value that wraps onto multiple visual lines while staying tucked under the opening quote instead of unindenting."
+    ports:
+      - "8080:8080"`,
   },
 ];
 
@@ -253,6 +306,24 @@ const config = { enabled: true, retries: 3, timeout: 30000, backoff: "exponentia
           <div className="grid">
             {SAMPLES.map((s) => (
               <figure key={s.lang} className="cell" style={{ maxWidth: width }}>
+                <figcaption>{s.label}</figcaption>
+                <CodeBox code={s.code} lang={s.lang} {...shared} />
+              </figure>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <h2>More examples</h2>
+          <p>
+            A grab-bag of real-world snippets — nested data, chained calls,
+            dense type signatures, prop-heavy JSX, deep config — each exercising
+            the structure-aware wrap a different way. Drag <strong>width</strong>{" "}
+            to watch them reflow.
+          </p>
+          <div className="grid">
+            {MORE_SAMPLES.map((s, i) => (
+              <figure key={i} className="cell" style={{ maxWidth: width }}>
                 <figcaption>{s.label}</figcaption>
                 <CodeBox code={s.code} lang={s.lang} {...shared} />
               </figure>
