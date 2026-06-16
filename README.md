@@ -111,12 +111,21 @@ lets you replace token rendering entirely.
 
 ## How structure-aware wrapping works
 
-Each line gets a CSS hanging indent of `wrapIndent + hangingIndent` columns: a
-negative `text-indent` pulls the **first** visual line back to column 0 (so the
-line's own leading whitespace renders normally), while `padding-left` pushes
-every **wrapped** continuation line in to line up. `wrapIndent` is computed from
-the line's tokens: the column after the first opening bracket, the start of a
-string body, the start of comment text, or — failing those — the leading indent.
+Each line gets a CSS hanging indent: a negative `text-indent` pulls the
+**first** visual line back to column 0 (so the line's own leading whitespace
+renders normally), while `padding-left` pushes every **wrapped** continuation
+line in to line up. The alignment anchor is found from the line's tokens: the
+first opening bracket, the start of a string body, the start of comment text,
+or — failing those — the leading indent.
+
+**The indent is a real measurement, not a column count.** The amount is
+`var(--codebox-wrap-indent, <ch fallback>)`. SSR emits the `ch` fallback —
+the anchor's character column expressed in `ch`, which is exact for monospace
+and needs no JavaScript. On mount the renderer measures the anchor glyph's
+actual pixel offset in the applied font (via collapsed-caret `Range` geometry)
+and sets `--codebox-wrap-indent`, so continuations line up under the anchor in
+**any** typeface — proportional, ligatured or mixed — not just monospace. It
+re-measures on resize and once web fonts swap in.
 
 A hard rule underpins all of this: **a continuation is always indented strictly
 more than the line's first character.** Structural alignment usually satisfies

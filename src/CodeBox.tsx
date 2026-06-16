@@ -6,6 +6,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from "react";
 import type { TokenKind } from "./classify";
 import { highlightToLines } from "./highlight";
@@ -22,6 +23,135 @@ import type {
 // useLayoutEffect warns during SSR; fall back to useEffect there.
 const useIsoLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+/** The caret position (left/top) at `offset` within `node`. */
+function caretAt(node: Text, offset: number): { left: number; top: number } {
+  const r = document.createRange();
+  r.setStart(node, offset);
+  r.setEnd(node, offset);
+  const rect = r.getBoundingClientRect();
+  return { left: rect.left, top: rect.top };
+}
+
+/**
+ * Measure the anchor's horizontal offset: how far the first `charCount`
+ * characters advance, in whatever font is actually applied. The first visual
+ * line is flush, so that advance is exactly where continuations must hang to.
+ *
+ * We take the difference between two collapsed carets (start of line and the
+ * anchor) rather than a range's bounding box: a range that spans several token
+ * spans under a large negative text-indent reports a bogus union width that
+ * tracks padding-left, which would feed back into the hanging indent it sets
+ * and ramp without converging. Carets give the pure glyph advance, immune to
+ * padding — exact for proportional fonts, ligatures and tabs alike.
+ *
+ * Returns null when the anchor has wrapped onto a later visual line (no single
+ * offset to align to — the cap governs there) or there's nothing to measure.
+ * Comment-marker overlays (injected after the text) are skipped.
+ */
+function measurePrefixPx(el: HTMLElement, charCount: number): number | null {
+  if (charCount <= 0) return 0;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      for (let p = node.parentElement; p && p !== el; p = p.parentElement) {
+        if (p.classList.contains("codebox__comment-marker")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    nodes.push(n as Text);
+  }
+  if (nodes.length === 0) return null;
+
+  let remaining = charCount;
+  let endNode = nodes[nodes.length - 1]!;
+  let endOffset = endNode.length;
+  for (const node of nodes) {
+    if (remaining <= node.length) {
+      endNode = node;
+      endOffset = remaining;
+      break;
+    }
+    remaining -= node.length;
+  }
+
+  const start = caretAt(nodes[0]!, 0);
+  const end = caretAt(endNode, endOffset);
+  // Anchor wrapped onto a later line: nothing to align to here.
+  if (Math.abs(end.top - start.top) > 1) return null;
+  return Math.max(0, end.left - start.left);
+}
+
+/**
+ * Measure the anchor's pixel offset and return a value for the
+ * `--codebox-wrap-indent` custom property (with any `hangingIndent` columns
+ * added on in `ch`). Re-measures on resize and after web fonts load. Returns
+ * undefined when there's nothing to measure (no structural anchor, wrap off, or
+ * not yet mounted), in which case the CSS `ch` fallback in `lineStyle` applies.
+ */
+function useWrapIndentVar(
+  ref: RefObject<HTMLElement | null>,
+  charCount: number | undefined,
+  hangingIndent: number,
+  enabled: boolean,
+): string | undefined {
+  const [value, setValue] = useState<string | undefined>(undefined);
+
+  useIsoLayoutEffect(() => {
+    if (!enabled || charCount == null) {
+      setValue((prev) => (prev === undefined ? prev : undefined));
+      return;
+    }
+    const el = ref.current;
+    if (!el) return;
+
+    const measure = () => {
+      const raw = measurePrefixPx(el, charCount);
+      if (raw == null) return;
+      // Round to a half-pixel: getBoundingClientRect jitters in the last
+      // decimals, and feeding an ever-so-different value back every render would
+      // never satisfy the equality guard below (an infinite update loop). The
+      // measured width is otherwise padding-independent, so this converges in
+      // one step. Half-pixel keeps alignment crisp without churn.
+      const px = Math.round(raw * 2) / 2;
+      const next =
+        hangingIndent > 0 ? `calc(${px}px + ${hangingIndent}ch)` : `${px}px`;
+      setValue((prev) => (prev === next ? prev : next));
+    };
+
+    measure();
+    // Re-measure when the line resizes (container width, font size) and once
+    // web fonts finish loading and swap in.
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    let cancelled = false;
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts?.ready) {
+      fonts.ready.then(() => {
+        if (!cancelled) measure();
+      });
+    }
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+    };
+  }, [ref, charCount, hangingIndent, enabled]);
+
+  return value;
+}
+
+/** Merge the measured hanging-indent custom property into a line's style. */
+function withWrapIndent(
+  style: CSSProperties,
+  wrapVar: string | undefined,
+): CSSProperties {
+  if (!wrapVar) return style;
+  return { ...style, ["--codebox-wrap-indent"]: wrapVar } as CSSProperties;
+}
 
 function tokenStyle(token: CodeToken, overrides?: TokenStyles): CSSProperties {
   const style: CSSProperties = {};
@@ -87,16 +217,23 @@ function CommentContent({
   contentStyle,
   marker,
   markerColor,
+  wrapIndentChars,
+  hangingIndent,
+  wrap,
   children,
 }: {
   contentStyle: CSSProperties;
   marker: string;
   markerColor?: string;
+  wrapIndentChars?: number;
+  hangingIndent: number;
+  wrap: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [tops, setTops] = useState<number[]>([]);
   const [left, setLeft] = useState(0);
+  const wrapVar = useWrapIndentVar(ref, wrapIndentChars, hangingIndent, wrap);
 
   useIsoLayoutEffect(() => {
     const el = ref.current;
@@ -135,7 +272,7 @@ function CommentContent({
     <span
       ref={ref}
       className="codebox__content codebox__content--comment"
-      style={{ position: "relative", ...contentStyle }}
+      style={withWrapIndent({ position: "relative", ...contentStyle }, wrapVar)}
     >
       {children}
       {tops.map((top, k) => (
@@ -148,6 +285,33 @@ function CommentContent({
           {marker}
         </span>
       ))}
+    </span>
+  );
+}
+
+/** Non-comment line content that measures its own structural hanging indent. */
+function PlainContent({
+  contentStyle,
+  wrapIndentChars,
+  hangingIndent,
+  wrap,
+  children,
+}: {
+  contentStyle: CSSProperties;
+  wrapIndentChars?: number;
+  hangingIndent: number;
+  wrap: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const wrapVar = useWrapIndentVar(ref, wrapIndentChars, hangingIndent, wrap);
+  return (
+    <span
+      ref={ref}
+      className="codebox__content"
+      style={withWrapIndent(contentStyle, wrapVar)}
+    >
+      {children}
     </span>
   );
 }
@@ -200,13 +364,21 @@ function Line({
           contentStyle={contentStyle}
           marker={comment.marker}
           markerColor={line.tokens.find((t) => t.kind === "comment")?.color}
+          wrapIndentChars={line.layout.wrapIndentChars}
+          hangingIndent={hangingIndent}
+          wrap={wrap}
         >
           {tokens}
         </CommentContent>
       ) : (
-        <span className="codebox__content" style={contentStyle}>
+        <PlainContent
+          contentStyle={contentStyle}
+          wrapIndentChars={line.layout.wrapIndentChars}
+          hangingIndent={hangingIndent}
+          wrap={wrap}
+        >
           {tokens}
-        </span>
+        </PlainContent>
       )}
     </span>
   );

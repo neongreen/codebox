@@ -224,8 +224,8 @@ const PRESENTATION_DEMOS: {
     code: PRESENTATION_CODE_TABS,
   },
   {
-    label: "Proportional code font (edge case)",
-    note: "Georgia as the *code* font. Alignment is measured in ch, so a non-monospace face will not line up perfectly — use a monospace font.",
+    label: "Proportional code font",
+    note: "Georgia as the *code* font. The hanging indent is measured from the real glyph positions, so continuations still line up under the anchor even though the face isn't monospace.",
     style: { "--codebox-font": "Georgia, serif" },
   },
 ];

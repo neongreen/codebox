@@ -99,6 +99,48 @@ describe("computeLineLayout: wrap alignment", () => {
     expect(l.wrapIndent).toBe(11);
   });
 
+  describe("wrapIndentChars (raw char offset of the measurable anchor)", () => {
+    test("first argument of a bracket", () => {
+      const l = layout([{ content: "foo(a, b, c", kind: "code" }]);
+      // '(' at index 3 -> body begins at char 4
+      expect(l.wrapIndentChars).toBe(4);
+    });
+
+    test("string body, after the opening quote", () => {
+      const l = layout([
+        { content: "const x = ", kind: "code" },
+        { content: '"abc', kind: "string" },
+      ]);
+      // 10 code chars + 1 quote -> body at char 11
+      expect(l.wrapIndentChars).toBe(11);
+    });
+
+    test("comment text, after the marker and gap", () => {
+      const l = layout([
+        { content: "  ", kind: "code" },
+        { content: "// hello", kind: "comment" },
+      ]);
+      // 2 leading + '//' (2) + 1 space -> text at char 5
+      expect(l.wrapIndentChars).toBe(5);
+    });
+
+    test("undefined for the no-anchor fallback (plain expression)", () => {
+      // No bracket/string/comment: the indent is the artificial +1 level, which
+      // sits under no glyph, so there's nothing to measure.
+      const l = layout([{ content: "    a + b + c", kind: "code" }]);
+      expect(l.wrapIndent).toBe(6);
+      expect(l.wrapIndentChars).toBeUndefined();
+    });
+
+    test("char offset differs from the display column when tabs precede it", () => {
+      // One tab (display col 2 at tabSize 2) then a call: the anchor's display
+      // column counts the tab as 2, but its char offset counts it as 1.
+      const l = layout([{ content: "\tfoo(a, b", kind: "code" }], 2);
+      expect(l.wrapIndent).toBe(6); // display: tab(2) + 'foo('(4) -> col 6
+      expect(l.wrapIndentChars).toBe(5); // chars: tab(1) + 'foo('(4) -> char 5
+    });
+  });
+
   test("full-line comment: marker, text column, and wrap alignment", () => {
     // "  // hello" — marker '//' at col 2, text at col 5
     const l = layout([

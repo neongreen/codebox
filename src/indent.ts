@@ -28,6 +28,13 @@ export function leadingIndentWidth(line: string, tabSize = 2): number {
  * WRAPPED continuation line in to line up under the code. With hangingIndent 0
  * the wrap aligns exactly under the first non-whitespace character.
  *
+ * The indent length is `var(--codebox-wrap-indent, <ch fallback>)`. The
+ * fallback — `indent` columns expressed in `ch` — is what SSR emits and is
+ * exact for monospace fonts. After mount the renderer measures the anchor
+ * glyph's real pixel offset in the actual font and sets `--codebox-wrap-indent`
+ * on the line, so alignment is correct under *any* typeface (proportional,
+ * ligatured, mixed) rather than assuming 1 column == 1ch.
+ *
  * When `wrap` is false we render with `pre` (no wrapping) and let the container
  * scroll horizontally — indentation is preserved trivially in that case.
  */
@@ -48,7 +55,8 @@ export function lineStyle(
   // first line out of flush. With a length, both resolve identically, so the
   // first visual line always starts at column 0. `--codebox-max-wrap` defaults
   // to 66cqw (66% of the codebox's own inline size).
-  const capped = `min(${total}ch, var(--codebox-max-wrap, 66cqw))`;
+  const indentLen = `var(--codebox-wrap-indent, ${total}ch)`;
+  const capped = `min(${indentLen}, var(--codebox-max-wrap, 66cqw))`;
   return {
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",

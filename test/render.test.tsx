@@ -26,8 +26,12 @@ describe("RenderedCode markup", () => {
     // line 2 "  return 1;" is indented 2 cols, no structure -> continuation at
     // 2 + continuationIndent(2) = 4 (strictly more than the first character).
     const html = await markup("function f() {\n  return 1;\n}", { wrap: true });
-    expect(html).toContain("padding-left:min(4ch");
-    expect(html).toContain("text-indent:calc(-1 * min(4ch");
+    // The ch value is the SSR fallback inside the --codebox-wrap-indent var; the
+    // client overrides it with a measured pixel offset after mount.
+    expect(html).toContain("padding-left:min(var(--codebox-wrap-indent, 4ch)");
+    expect(html).toContain(
+      "text-indent:calc(-1 * min(var(--codebox-wrap-indent, 4ch)",
+    );
     expect(html).toContain("white-space:pre-wrap");
   });
 
@@ -90,6 +94,6 @@ describe("RenderedCode markup", () => {
   test("aligns wrapped continuations under function args (style reflects col)", async () => {
     // 'const r = f(a, b);' -> '(' at index 11, args at col 12
     const html = await markup("const r = f(a, b);", { wrap: true });
-    expect(html).toContain("padding-left:min(12ch");
+    expect(html).toContain("padding-left:min(var(--codebox-wrap-indent, 12ch)");
   });
 });

@@ -41,8 +41,21 @@ export interface LineLayout {
    * Display column that wrapped continuation lines should align to. Falls back
    * to the leading indent, but aligns under the first argument of an open
    * bracket, under a string body, or under comment text when applicable.
+   *
+   * This is a *character-column* count; it converts to pixels exactly only in a
+   * monospace font (1 col = 1ch). It's the SSR / no-JS fallback indent.
    */
   wrapIndent: number;
+  /**
+   * Number of leading characters (a raw string index, not a display column)
+   * before the alignment anchor, when the anchor is a real structural point —
+   * the first argument of a bracket, a string body, or comment text. The
+   * renderer measures the pixel width of these characters in the actual font
+   * and uses that as the hanging indent, so alignment is correct under *any*
+   * typeface — not just monospace. Undefined when the indent is the artificial
+   * "one level past the leading indent" fallback (no glyph to align under).
+   */
+  wrapIndentChars?: number;
   /** Present when the line is or ends with a comment. */
   comment?: CommentLayout;
   /** Present when the line ends inside a string literal (align the body). */
@@ -83,17 +96,23 @@ export function computeLineLayout(
   // because a fully-balanced call still word-wraps when it's long, and that's
   // exactly when its arguments must not lose their alignment.
   let firstOpenCol = -1;
-  for (const c of chars) {
+  let firstOpenIdx = -1;
+  for (let idx = 0; idx < chars.length; idx++) {
+    const c = chars[idx]!;
     if (c.kind !== "code") continue;
     if (OPEN.has(c.ch)) {
       firstOpenCol = c.col;
+      firstOpenIdx = idx;
       break;
     }
   }
 
   // First comment on the line (full-line or trailing).
-  const firstComment = chars.find((c) => c.kind === "comment");
+  const firstCommentIdx = chars.findIndex((c) => c.kind === "comment");
+  const firstComment =
+    firstCommentIdx >= 0 ? chars[firstCommentIdx] : undefined;
   let comment: CommentLayout | undefined;
+  let commentTextChars: number | undefined;
   if (firstComment) {
     const markerCol = firstComment.col;
     const rest = chars
@@ -108,10 +127,14 @@ export function computeLineLayout(
       markerCol,
       textCol: markerCol + marker.length + gap,
     };
+    // Character offset of the comment text (markerStart + marker + gap), so the
+    // renderer can measure its real pixel position.
+    commentTextChars = firstCommentIdx + marker.length + gap;
   }
 
   // Does the line end inside a string literal? (long value / unterminated)
   let stringContentCol: number | undefined;
+  let stringBodyChars: number | undefined;
   const lastNonSpace = [...chars].reverse().find((c) => c.ch.trim() !== "");
   if (lastNonSpace && lastNonSpace.kind === "string") {
     // Walk back to the start of this contiguous string run.
@@ -124,13 +147,24 @@ export function computeLineLayout(
       i++;
     }
     stringContentCol = contentCol;
+    stringBodyChars = i; // raw char index where the body begins
   }
 
   let wrapIndent: number;
-  if (comment) wrapIndent = comment.textCol;
-  else if (stringContentCol !== undefined) wrapIndent = stringContentCol;
-  else if (firstOpenCol >= 0) wrapIndent = firstOpenCol + 1;
-  else wrapIndent = leadingIndent;
+  let wrapIndentChars: number | undefined;
+  if (comment) {
+    wrapIndent = comment.textCol;
+    wrapIndentChars = commentTextChars;
+  } else if (stringContentCol !== undefined) {
+    wrapIndent = stringContentCol;
+    wrapIndentChars = stringBodyChars;
+  } else if (firstOpenCol >= 0) {
+    wrapIndent = firstOpenCol + 1;
+    wrapIndentChars = firstOpenIdx + 1;
+  } else {
+    wrapIndent = leadingIndent;
+    wrapIndentChars = undefined;
+  }
 
   // Rule: a continuation must be indented strictly more than the line's first
   // character. Structural alignment usually satisfies this already; when it
@@ -139,7 +173,10 @@ export function computeLineLayout(
   // of where the statement began.
   if (wrapIndent <= leadingIndent) {
     wrapIndent = leadingIndent + Math.max(1, contIndent);
+    // The fallback indent doesn't sit under any glyph, so there's nothing to
+    // measure: the renderer uses the ch-based value.
+    wrapIndentChars = undefined;
   }
 
-  return { wrapIndent, comment, stringContentCol };
+  return { wrapIndent, wrapIndentChars, comment, stringContentCol };
 }
