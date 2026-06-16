@@ -139,6 +139,97 @@ const MORE_SAMPLES: { lang: string; label: string; code: string }[] = [
   },
 ];
 
+// One snippet, rendered many ways. It packs the behaviours that are sensitive
+// to font and settings into a few lines: leading indent, a comment that wraps,
+// a call whose object argument wraps under the first arg, and a long string.
+const PRESENTATION_CODE = `function buildConfig(opts) {
+  // merge defaults, overrides, and computed fields into the final configuration object
+  return merge(defaults, opts, { id: makeId(opts.name, opts.scope), label: "Built at " + Date.now() + " for project " + opts.name });
+}`;
+
+// Same code, tab-indented, for the tab-size demo.
+const PRESENTATION_CODE_TABS = `function buildConfig(opts) {
+\t// merge defaults, overrides, and computed fields into the final configuration object
+\treturn merge(defaults, opts, { id: makeId(opts.name, opts.scope) });
+}`;
+
+type DemoProps = {
+  proseStrings?: boolean;
+  hangingIndent?: number;
+  tabSize?: number;
+  continuationIndent?: number;
+};
+
+// Each card stresses a different integration knob: typeface, size/leading, the
+// prose font, the wrap cap, tab handling, and toggled features. Style overrides
+// set the public CSS variables an integrator would use.
+const PRESENTATION_DEMOS: {
+  label: string;
+  note: string;
+  // Plain record so the public --codebox-* custom properties are allowed; cast
+  // to CSSProperties at the call site.
+  style?: Record<string, string | number>;
+  props?: DemoProps;
+  code?: string;
+}[] = [
+  {
+    label: "Default",
+    note: "ui-monospace, the bundled stack.",
+  },
+  {
+    label: "Fira Code",
+    note: "A programming web font. codebox disables ligatures by default so columns stay honest.",
+    style: { "--codebox-font": '"Fira Code", ui-monospace, monospace' },
+  },
+  {
+    label: "JetBrains Mono",
+    note: "Wider metrics than the default — alignment is ch-based, so it still lines up.",
+    style: { "--codebox-font": '"JetBrains Mono", ui-monospace, monospace' },
+  },
+  {
+    label: "Large — 18px / 1.8",
+    note: "Bumped font size and line height via CSS variables.",
+    style: { "--codebox-font-size": "18px", "--codebox-line-height": "1.8" },
+  },
+  {
+    label: "Compact — 11px",
+    note: "Smaller, tighter. Useful in dense dashboards and side panels.",
+    style: { "--codebox-font-size": "11px", "--codebox-line-height": "1.4" },
+  },
+  {
+    label: "Serif prose font",
+    note: "Override --codebox-prose-font; the wrapping string body reads as serif text.",
+    style: { "--codebox-prose-font": '"Source Serif 4", Georgia, serif' },
+  },
+  {
+    label: "Tight wrap cap — 40cqw",
+    note: "--codebox-max-wrap caps the hanging indent so deep alignment degrades gracefully in a narrow box.",
+    style: { "--codebox-max-wrap": "40cqw" },
+  },
+  {
+    label: "Hanging indent +4",
+    note: "Extra columns added to every continuation line, on top of structural alignment.",
+    props: { hangingIndent: 4 },
+  },
+  {
+    label: "Prose strings off",
+    note: "Strings stay monospace — code reads uniformly, long values just wrap monospaced.",
+    props: { proseStrings: false },
+  },
+  {
+    label: "Tabs, tab-size 4",
+    note: "Tab-indented source. Keep the CSS tab-size in sync with the tabSize prop or columns drift.",
+    style: { tabSize: 4 },
+    props: { tabSize: 4 },
+    code: PRESENTATION_CODE_TABS,
+  },
+  {
+    label: "Proportional code font (edge case)",
+    note: "Georgia as the *code* font. Alignment is measured in ch, so a non-monospace face will not line up perfectly — use a monospace font.",
+    style: { "--codebox-font": "Georgia, serif" },
+  },
+];
+
 const MALFORMED = `function broken( {
   const s = "this string is never closed and the braces are all wrong {{{
   return arr.map(=>
@@ -326,6 +417,36 @@ const config = { enabled: true, retries: 3, timeout: 30000, backoff: "exponentia
               <figure key={i} className="cell" style={{ maxWidth: width }}>
                 <figcaption>{s.label}</figcaption>
                 <CodeBox code={s.code} lang={s.lang} {...shared} />
+              </figure>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <h2>Fonts &amp; settings</h2>
+          <p>
+            The same snippet under the typefaces and settings you might hit when
+            integrating codebox elsewhere — different fonts, sizes, line heights,
+            the prose font, the wrap cap, tabs, and toggled features. Everything
+            is driven by the public <code>--codebox-*</code> CSS variables and
+            props. Drag <strong>width</strong> to watch each one reflow.
+          </p>
+          <div className="grid">
+            {PRESENTATION_DEMOS.map((d, i) => (
+              <figure key={i} className="cell" style={{ maxWidth: width }}>
+                <figcaption>{d.label}</figcaption>
+                <p className="note">{d.note}</p>
+                <CodeBox
+                  code={d.code ?? PRESENTATION_CODE}
+                  lang="typescript"
+                  theme={theme}
+                  wrap={wrap}
+                  repeatCommentMarker={repeatCommentMarker}
+                  showLineNumbers={showLineNumbers}
+                  tokenStyles={{ comment: COMMENT_STYLES[commentStyle] }}
+                  style={d.style as CSSProperties}
+                  {...d.props}
+                />
               </figure>
             ))}
           </div>
