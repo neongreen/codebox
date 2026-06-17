@@ -86,6 +86,91 @@ function measurePrefixPx(el: HTMLElement, charCount: number): number | null {
   return Math.max(0, end.left - start.left);
 }
 
+// One offscreen canvas, reused across all measurements.
+let measureCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * The x-height of `family` per 1px of font-size, measured via canvas glyph
+ * metrics — subpixel accurate and font-resolution exact (the canvas resolves
+ * the family list the same way the page does). We measure the actual bounding
+ * box of "x": its ascent above the baseline *is* the x-height, since "x" has no
+ * ascender or descender. Scale-invariant, so we measure at a large reference
+ * size for precision and divide it back out. Returns null when metrics aren't
+ * available (very old engines) or the glyph has no box.
+ */
+function xHeightPerPx(family: string, weight: string, style: string): number | null {
+  if (typeof document === "undefined") return null;
+  const canvas = (measureCanvas ??= document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const ref = 256;
+  ctx.font = `${style} ${weight} ${ref}px ${family}`;
+  const ascent = ctx.measureText("x").actualBoundingBoxAscent;
+  if (typeof ascent !== "number" || !(ascent > 0)) return null;
+  return ascent / ref;
+}
+
+/**
+ * Measure the code and prose fonts and return a px font-size for the prose font
+ * that gives it the *same x-height* as the code font, so a proportional string
+ * body looks the same size as the surrounding monospace instead of smaller.
+ * Returns a `--codebox-prose-font-size-measured` value (px) or undefined.
+ *
+ * This only sets the *measured* variable; a user-supplied
+ * `--codebox-prose-font-size` still wins via the cascade in styles.css, so an
+ * explicit override is respected and never overwritten here. Re-measures on
+ * resize (the box / font-size can change) and after web fonts swap in.
+ */
+function useProseFontSizeVar(
+  ref: RefObject<HTMLElement | null>,
+  enabled: boolean,
+): string | undefined {
+  const [value, setValue] = useState<string | undefined>(undefined);
+
+  useIsoLayoutEffect(() => {
+    if (!enabled) {
+      setValue((prev) => (prev === undefined ? prev : undefined));
+      return;
+    }
+    const el = ref.current;
+    if (!el) return;
+
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const proseFamily = cs.getPropertyValue("--codebox-prose-font").trim();
+      if (!proseFamily) return;
+      const sizePx = parseFloat(cs.fontSize);
+      if (!(sizePx > 0)) return;
+      // Same weight/style for both so we compare only the typefaces.
+      const codeX = xHeightPerPx(cs.fontFamily, cs.fontWeight, cs.fontStyle);
+      const proseX = xHeightPerPx(proseFamily, cs.fontWeight, cs.fontStyle);
+      if (codeX == null || proseX == null) return;
+      // Round to 0.01px: getComputedStyle / measureText jitter in the last
+      // decimals, and an ever-changing value would defeat the equality guard.
+      const px = Math.round((sizePx * (codeX / proseX)) * 100) / 100;
+      const next = `${px}px`;
+      setValue((prev) => (prev === next ? prev : next));
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    let cancelled = false;
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts?.ready) {
+      fonts.ready.then(() => {
+        if (!cancelled) measure();
+      });
+    }
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+    };
+  }, [ref, enabled]);
+
+  return value;
+}
+
 /**
  * Measure the anchor's pixel offset and return a value for the
  * `--codebox-wrap-indent` custom property (with any `hangingIndent` columns
@@ -401,15 +486,23 @@ export function RenderedCode({
   className,
   style,
 }: RenderedCodeProps) {
+  const preRef = useRef<HTMLPreElement>(null);
+  // Size the prose font to match the code font's x-height (skipped when prose
+  // strings are off, or when the user overrides --codebox-prose-font-size).
+  const proseFontSize = useProseFontSizeVar(preRef, proseStrings);
+  const proseVar = proseFontSize
+    ? ({ ["--codebox-prose-font-size-measured"]: proseFontSize } as CSSProperties)
+    : undefined;
   return (
     <pre
+      ref={preRef}
       className={classNames(
         "codebox",
         wrap ? "codebox--wrap" : "codebox--scroll",
         showLineNumbers && "codebox--numbered",
         className,
       )}
-      style={{ color: data.fg, background: data.bg, ...style }}
+      style={{ color: data.fg, background: data.bg, ...proseVar, ...style }}
       data-codebox-lang={data.lang}
     >
       <code className="codebox__code">

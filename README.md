@@ -109,6 +109,15 @@ The proportional font for string bodies is the `--codebox-prose-font` CSS
 variable — override it to whatever you like. For total control, `renderToken`
 lets you replace token rendering entirely.
 
+**Matching the size automatically.** A proportional font set at the same
+`font-size` as the monospace code usually *looks* smaller, because its x-height
+per em differs. So on mount the renderer measures the real x-height of both the
+code font and the prose font (canvas glyph metrics, subpixel-accurate) and sets
+`--codebox-prose-font-size-measured` so the prose body renders at the **same
+x-height** as the surrounding code — they look the same size. It re-measures on
+resize and once web fonts swap in. Set `--codebox-prose-font-size` yourself to
+pin an explicit size; your value wins and the measurement is skipped.
+
 ## How structure-aware wrapping works
 
 Each line gets a CSS hanging indent: a negative `text-indent` pulls the
