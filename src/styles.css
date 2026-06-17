@@ -36,12 +36,33 @@
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-/* String literal bodies rendered as proportional "prose" text blocks, a touch
-   smaller than the code. The fixed line-height keeps line boxes uniform, so the
-   smaller strings don't change row heights. Tune with --codebox-prose-font-size. */
+/* String literal bodies rendered as proportional "prose" text blocks.
+
+   By default the renderer measures the actual x-height of the code font and the
+   prose font on mount and sets --codebox-prose-font-size-measured so the prose
+   font is sized to the *same x-height* as the code — they look the same size
+   instead of the proportional font appearing smaller. Set
+   --codebox-prose-font-size yourself to override and skip the measurement (it
+   wins via the cascade below). The 0.9em is only the pre-measurement fallback
+   (no JS / SSR).
+
+   `line-height: 1` keeps row heights uniform. Matching x-height can scale the
+   prose *font-size* above the code's (when the prose face has a smaller
+   x-height per em — e.g. many serifs), and the codebox line-height is unitless,
+   so an inline prose span would otherwise compute a taller line box from its
+   own larger size and make just the string row taller than the code rows. With
+   `line-height: 1` the prose box is at most its font-size, which stays under
+   the block's own line strut (font-size x --codebox-line-height), so the strut
+   governs every row and they all stay the same height. (Pin
+   --codebox-prose-font-size if a prose face is so low-x-height that the matched
+   size would exceed that strut.) */
 .codebox__tok--prose {
   font-family: var(--codebox-prose-font);
-  font-size: var(--codebox-prose-font-size, 0.9em);
+  font-size: var(
+    --codebox-prose-font-size,
+    var(--codebox-prose-font-size-measured, 0.9em)
+  );
+  line-height: 1;
 }
 
 /* Repeated comment markers overlaid on wrapped continuation lines. */
