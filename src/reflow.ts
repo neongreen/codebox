@@ -18,16 +18,12 @@
  * Pure and unit-tested; the React layer measures the width and calls in.
  */
 
-import { computeLineLayout, type TokenKind } from "./classify";
+import { chainRegion, computeLineLayout, type TokenKind } from "./classify";
 import { leadingIndentWidth } from "./indent";
 import type { CodeLine, CodeToken } from "./types";
 
 const OPEN = new Set(["(", "[", "{"]);
 const CLOSE = new Set([")", "]", "}"]);
-
-function isIdentStart(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z_$]/.test(ch);
-}
 
 /** A single character carrying the style of the token it came from. */
 interface Atom {
@@ -212,28 +208,17 @@ function buildSeq(
   return parts.length === 1 ? parts[0]! : { t: "concat", parts };
 }
 
-/** Positions of the top-level (depth-0) chain dots within [lo, hi). */
-function chainDots(atoms: Atom[], lo: number, hi: number): number[] {
-  const dots: number[] = [];
-  let depth = 0;
-  for (let j = lo; j < hi; j++) {
-    const a = atoms[j]!;
-    if (a.kind !== "code") continue;
-    if (OPEN.has(a.ch)) depth++;
-    else if (CLOSE.has(a.ch)) {
-      if (depth > 0) depth--;
-    } else if (depth === 0 && a.ch === "." && isIdentStart(atoms[j + 1]?.ch)) {
-      dots.push(j);
-    }
-  }
-  return dots;
-}
-
-/** Build the chain group: head, then each `.link` behind its own break point. */
+/**
+ * Build the doc for a chain line: any prefix before the chain (e.g. `const x =`)
+ * stays put, then the chain is a group — head receiver, then each `.link` behind
+ * its own break point. Returns null when the line isn't a clean chain.
+ */
 function buildChain(atoms: Atom[], indentUnit: number): Doc | null {
-  const dots = chainDots(atoms, 0, atoms.length);
-  if (dots.length < 2) return null;
-  const head = buildSeq(atoms, 0, dots[0]!, indentUnit, false);
+  const region = chainRegion(atoms);
+  if (!region) return null;
+  const { start, dots } = region;
+  const prefix = buildSeq(atoms, 0, start, indentUnit, false);
+  const head = buildSeq(atoms, start, dots[0]!, indentUnit, false);
   const links: Doc[] = [];
   for (let d = 0; d < dots.length; d++) {
     const from = dots[d]!;
@@ -241,13 +226,14 @@ function buildChain(atoms: Atom[], indentUnit: number): Doc | null {
     links.push({ t: "line", flat: [] });
     links.push(buildSeq(atoms, from, to, indentUnit, false));
   }
-  return {
+  const chain: Doc = {
     t: "group",
     doc: {
       t: "concat",
       parts: [head, { t: "nest", indent: indentUnit, doc: { t: "concat", parts: links } }],
     },
   };
+  return { t: "concat", parts: [prefix, chain] };
 }
 
 // --- Layout (Wadler/Leijen best/fits) -------------------------------------

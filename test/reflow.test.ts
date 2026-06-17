@@ -18,6 +18,28 @@ describe("reflowLine: chain reformatting", () => {
     expect(r.lines).toHaveLength(1);
   });
 
+  test("property accesses split by an operator are NOT a chain", async () => {
+    // Two `.` accesses on different receivers, separated by `&&`/`>` — must not
+    // be reformatted as one chain (regression: this used to break before
+    // `.length` and `.active`).
+    const t = await toks(
+      "const ok = a.length > 0 && b.active && c.ready && d.enabled;",
+    );
+    expect(reflowLine(t, 10).reflowed).toBe(false);
+  });
+
+  test("an assignment prefix stays on the first line; only the chain breaks", async () => {
+    const t = await toks("this.result = source.filter(ok).map(id).slice(0);");
+    expect(reflowToString(t, 24)).toBe(
+      [
+        "this.result = source",
+        "  .filter(ok)",
+        "  .map(id)",
+        "  .slice(0);",
+      ].join("\n"),
+    );
+  });
+
   test("a chain that fits stays on one line", async () => {
     const t = await toks("items.filter(ok).map(id).slice(0, 10)");
     expect(reflowToString(t, 200)).toBe("items.filter(ok).map(id).slice(0, 10)");

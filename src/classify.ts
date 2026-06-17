@@ -19,6 +19,64 @@ function isIdentStart(ch: string | undefined): boolean {
   return ch !== undefined && /[A-Za-z_$]/.test(ch);
 }
 
+/** A character carrying only what chain detection needs. */
+export interface Cell {
+  ch: string;
+  kind: TokenKind;
+}
+
+/**
+ * Find the trailing method/property chain on a line, if any. A chain is a run
+ * of `.member` accesses (with their call/index brackets) on a single receiver —
+ * `a.b().c().d()`. The run must be *clean*: no other top-level operator (`&&`,
+ * `+`, `>`, `=`, `,`, a string literal, …) may sit between its links, or it
+ * isn't one chain. We take the maximal such run at the *end* of the line, so
+ * `const x = items.filter(f).map(g)` finds `items.filter(f).map(g)` (the
+ * assignment prefix is not part of it) while `a.length > 0 && b.active` finds
+ * nothing (the `&&` splits the two property accesses).
+ *
+ * Returns the index where the chain region starts and the indices of its dots,
+ * or null when there's no clean chain of at least two links.
+ */
+export function chainRegion(
+  cells: readonly Cell[],
+): { start: number; dots: number[] } | null {
+  let depth = 0;
+  let lastBoundary = -1; // last spot that breaks the chain spine
+  const dots: number[] = [];
+  for (let i = 0; i < cells.length; i++) {
+    const { ch, kind } = cells[i]!;
+    // A string/comment at top level is a value with operators around it, not
+    // part of a member spine — treat it as a boundary.
+    if (kind !== "code") {
+      if (depth === 0) lastBoundary = i;
+      continue;
+    }
+    if (OPEN.has(ch)) {
+      depth++;
+      continue;
+    }
+    if (CLOSE.has(ch)) {
+      if (depth > 0) depth--;
+      continue;
+    }
+    if (depth > 0) continue;
+    if (ch === "." && isIdentStart(cells[i + 1]?.ch)) {
+      dots.push(i);
+      continue;
+    }
+    // Spine-safe characters: identifiers, the dot itself, optional-chaining `?`,
+    // non-null `!`, a trailing `;`, and whitespace. Anything else is an operator
+    // that ends the trailing chain.
+    if (/[A-Za-z0-9_$.?!;]/.test(ch) || ch.trim() === "") continue;
+    lastBoundary = i;
+  }
+  const start = lastBoundary + 1;
+  const regionDots = dots.filter((d) => d > lastBoundary);
+  if (regionDots.length < 2) return null;
+  return { start, dots: regionDots };
+}
+
 /** Map a token's TextMate scope list to a coarse kind. */
 export function classifyScopes(scopes: readonly string[]): TokenKind {
   for (const s of scopes) {
@@ -113,41 +171,16 @@ export function computeLineLayout(
     }
   }
 
-  // Method/property chain: the `.` member-access points that sit at
-  // bracket-depth 0 (outside any call arguments, array, or object). When a line
-  // strings several of them together — `foo.bar().baz().qux()` — it's a chain,
-  // and the right place to hang wrapped continuations is under the *first* dot,
-  // so each wrapped `.method()` stacks under the first one (the way a formatter
-  // would break the chain) instead of under the first call's arguments.
-  //
-  // Dots inside arguments live at depth > 0, so they never count; a lone dot
-  // (`obj.method(longArgs)`) isn't a chain and falls through to the bracket
-  // rule. We require the dot to be followed by an identifier start so a numeric
-  // literal's point (`3.14`) or a spread (`...x`) can't masquerade as a chain.
-  let depth = 0;
-  let firstChainDotCol = -1;
-  let firstChainDotIdx = -1;
-  let chainDotCount = 0;
-  for (let idx = 0; idx < chars.length; idx++) {
-    const c = chars[idx]!;
-    if (c.kind !== "code") continue;
-    if (OPEN.has(c.ch)) {
-      depth++;
-    } else if (CLOSE.has(c.ch)) {
-      if (depth > 0) depth--;
-    } else if (
-      depth === 0 &&
-      c.ch === "." &&
-      isIdentStart(chars[idx + 1]?.ch)
-    ) {
-      chainDotCount++;
-      if (firstChainDotIdx < 0) {
-        firstChainDotCol = c.col;
-        firstChainDotIdx = idx;
-      }
-    }
-  }
-  const isChain = chainDotCount >= 2;
+  // Method/property chain: when a line ends in a clean run of `.member` calls
+  // on one receiver — `foo.bar().baz().qux()` — wrapped continuations should
+  // hang under the chain's *first* dot, so each `.method()` stacks under it the
+  // way a formatter would break it, rather than under the first call's args.
+  // `chainRegion` rejects false positives like `a.length > 0 && b.active` where
+  // an operator splits the dots, so this never fires on non-chains.
+  const region = chainRegion(chars);
+  const isChain = region !== null;
+  const firstChainDotIdx = region ? region.dots[0]! : -1;
+  const firstChainDotCol = region ? chars[firstChainDotIdx]!.col : -1;
 
   // First comment on the line (full-line or trailing).
   const firstCommentIdx = chars.findIndex((c) => c.kind === "comment");
