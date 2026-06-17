@@ -118,6 +118,13 @@ x-height** as the surrounding code — they look the same size. It re-measures o
 resize and once web fonts swap in. Set `--codebox-prose-font-size` yourself to
 pin an explicit size; your value wins and the measurement is skipped.
 
+Matching x-height can scale the prose *font-size* above the code's (a serif, say,
+has a smaller x-height per em), so the prose token uses `line-height: 1` to keep
+every row the same height — the string row never grows taller than the code rows.
+The only way to outgrow that is a prose face so low-x-height that its matched size
+exceeds the line strut (`font-size × --codebox-line-height`); pin
+`--codebox-prose-font-size` if you hit that.
+
 ## How structure-aware wrapping works
 
 Each line gets a CSS hanging indent: a negative `text-indent` pulls the

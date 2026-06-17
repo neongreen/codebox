@@ -85,13 +85,13 @@ describeFn("prose font x-height matching (real browser mount)", () => {
     server?.stop(true);
   });
 
-  async function mount(css: string) {
+  async function mount(
+    css: string,
+    code = `const message = "a long string body that reads like prose text here";`,
+  ) {
     extraCss = css;
     dataJson = JSON.stringify(
-      await highlightToLines(
-        `const message = "a long string body that reads like prose text here";`,
-        { lang: "typescript" },
-      ),
+      await highlightToLines(code, { lang: "typescript" }),
     );
     const p = await browser.newPage();
     await p.goto(`http://localhost:${server.port}/`, {
@@ -113,11 +113,15 @@ describeFn("prose font x-height matching (real browser mount)", () => {
         const perPx = ctx.measureText("x").actualBoundingBoxAscent / 256;
         return perPx * parseFloat(cs.fontSize);
       };
+      const lineHeights = [
+        ...document.querySelectorAll(".codebox__line"),
+      ].map((l) => (l as HTMLElement).getBoundingClientRect().height);
       return {
         mounted: !!document.querySelector(".codebox"),
         proseFontSize: parseFloat(getComputedStyle(proseTok).fontSize),
         codeXHeight: xHeight(codeTok),
         proseXHeight: xHeight(proseTok),
+        lineHeights,
       };
     });
     await p.close();
@@ -139,5 +143,23 @@ describeFn("prose font x-height matching (real browser mount)", () => {
     expect(m.mounted).toBe(true);
     // Override wins over the measurement: 0.5em of 13px.
     expect(m.proseFontSize).toBeCloseTo(6.5, 1);
+  });
+
+  test("the string row stays the same height as code rows, even when the matched prose font is larger (serif)", async () => {
+    // A low-x-height serif gets scaled *above* the code size to match x-height.
+    // Without line-height:1 on the prose token, that would make the string row
+    // taller than the code rows. The fix keeps every row the same height.
+    const m = await mount(
+      `--codebox-prose-font: 'Times New Roman', Times, serif;`,
+      `const a = 1;\nconst greeting = "Hello there, this is a string body";\nconst b = 2;`,
+    );
+    expect(m.mounted).toBe(true);
+    expect(m.lineHeights.length).toBe(3);
+    // The match genuinely scaled the serif past the 13px code size...
+    expect(m.proseFontSize).toBeGreaterThan(13);
+    // ...yet all three rows are the same height (within sub-pixel rounding).
+    const [r0, r1, r2] = m.lineHeights;
+    expect(Math.abs(r1 - r0)).toBeLessThan(0.5);
+    expect(Math.abs(r2 - r0)).toBeLessThan(0.5);
   });
 });
