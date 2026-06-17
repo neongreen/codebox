@@ -11,11 +11,34 @@ async function toks(code: string): Promise<CodeToken[]> {
 }
 
 describe("reflowLine: chain reformatting", () => {
-  test("a non-chain line is left untouched", async () => {
-    const t = await toks("const x = foo(a, b, c) + bar;");
+  test("a line with nothing breakable is left untouched", async () => {
+    const t = await toks("const ok = a && b && c && d && e && f && g && h;");
     const r = reflowLine(t, 10);
     expect(r.reflowed).toBe(false);
     expect(r.lines).toHaveLength(1);
+  });
+
+  test("a standalone call breaks its args one per line (no mid-identifier wrap)", async () => {
+    const t = await toks("const r = compute(alpha, beta, gamma, delta);");
+    expect(reflowToString(t, 20)).toBe(
+      [
+        "const r = compute(",
+        "  alpha,",
+        "  beta,",
+        "  gamma,",
+        "  delta",
+        ");",
+      ].join("\n"),
+    );
+  });
+
+  test("an array literal breaks one element per line when it overflows", async () => {
+    const t = await toks("const xs = [one, two, three, four, five];");
+    expect(reflowToString(t, 14)).toBe(
+      ["const xs = [", "  one,", "  two,", "  three,", "  four,", "  five", "];"].join(
+        "\n",
+      ),
+    );
   });
 
   test("property accesses split by an operator are NOT a chain", async () => {
@@ -85,6 +108,16 @@ describe("reflowLine: chain reformatting", () => {
         "  .slice(0)",
       ].join("\n"),
     );
+  });
+
+  test("a small group doesn't break just because later content overflows", async () => {
+    // Regression: `(r)` must stay on one line even though the arrow body that
+    // follows it overflows (Wadler `fits` coupling bug).
+    const t = await toks("rows.map((r) => ({ id: r.id, name: r.name, ok: r.ok }))");
+    const lines = reflowToString(t, 22).split("\n");
+    // `(r)` is intact on some line; no line is a lone `(` or `r`.
+    expect(lines.some((l) => l.includes("(r)"))).toBe(true);
+    expect(lines.some((l) => l.trim() === "r")).toBe(false);
   });
 
   test("never alters non-space characters (only relocates whitespace)", async () => {

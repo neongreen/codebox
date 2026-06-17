@@ -18,7 +18,7 @@
  * Pure and unit-tested; the React layer measures the width and calls in.
  */
 
-import { chainRegion, computeLineLayout, type TokenKind } from "./classify";
+import { chainRegion, type TokenKind } from "./classify";
 import { leadingIndentWidth } from "./indent";
 import type { CodeLine, CodeToken } from "./types";
 
@@ -269,7 +269,12 @@ function fits(remaining: number, stack: Item[], m: Measurer): boolean {
         items.push({ indent: indent + doc.indent, mode, doc: doc.doc });
         break;
       case "group":
-        items.push({ indent, mode: "flat", doc: doc.doc });
+        // Keep the ambient mode rather than forcing flat: a *following* group
+        // that will break (its newline ends this fit check) means a small group
+        // like `(r)` no longer breaks just because a later structure overflows.
+        // The candidate group is pushed by `best` as its contents already in
+        // flat mode, so it is still measured flat.
+        items.push({ indent, mode, doc: doc.doc });
         break;
     }
   }
@@ -341,11 +346,12 @@ export interface ReflowOptions {
 }
 
 /**
- * Reformat one source line if it's a `.`-chain that needs it. `maxWidth` is the
- * available width in the measurer's units (pixels with a real measurer, columns
- * with the default). Non-chains (and chains that fit) come back as a single
- * line. Continuation lines are indented `indentUnit` columns per level past the
- * line's own leading indent.
+ * Reformat one source line to fit `maxWidth` (in the measurer's units — pixels
+ * with a real measurer, columns with the default). A `.`-chain breaks one call
+ * per line; any other line with a bracketed group (call args, array, object,
+ * import list) breaks that group one item per line when it overflows. Lines
+ * that fit, or have nothing breakable, come back as a single line unchanged.
+ * Only whitespace is relocated; no other character is altered.
  */
 export function reflowLine(
   tokens: readonly CodeToken[],
@@ -353,8 +359,11 @@ export function reflowLine(
   { indentUnit = 2, measurer = COLUMN_MEASURER }: ReflowOptions = {},
 ): ReflowResult {
   const atoms = toAtoms(tokens);
-  const doc = buildChain(atoms, indentUnit);
-  if (!doc) return { reflowed: false, lines: [atomsToTokens(atoms)] };
+  // A chain reformats around its dots; anything else reflows around its
+  // brackets (buildSeq turns each `(`/`[`/`{` group into a breakable group).
+  const doc =
+    buildChain(atoms, indentUnit) ??
+    buildSeq(atoms, 0, atoms.length, indentUnit, false);
 
   const base = leadingWS(atoms);
   const outs = best(maxWidth, base, doc, measurer);
@@ -369,14 +378,20 @@ export function reflowLine(
       lines.push(indent);
     }
   }
-  return { reflowed: true, lines: lines.map(atomsToTokens) };
+  // "Reflowed" only when we actually broke the line into more than one visual
+  // line; a line that stayed flat is returned untouched by the caller.
+  return { reflowed: lines.length > 1, lines: lines.map(atomsToTokens) };
 }
 
 /**
- * Reflow a source line into one or more render-ready {@link CodeLine}s. When the
- * line is a chain that needs breaking, each visual line gets its own freshly
- * computed layout so it still soft-wraps correctly if it remains too long.
- * Lines that aren't chains (or chains that fit) come back unchanged.
+ * Reflow a source line into one or more render-ready {@link CodeLine}s.
+ *
+ * A reflowed sub-line is already laid out to fit, so it gets a *plain* layout
+ * that hangs only at its own leading indent — NOT the structural bracket/chain
+ * anchor `computeLineLayout` would pick. That anchor (e.g. under the `(` at the
+ * end of an opener line like `compute(`) would shrink the line box and make an
+ * already-fitting line word-wrap mid-identifier. Lines that don't reflow come
+ * back unchanged, with their original structural layout.
  */
 export function reflowSourceLine(
   line: CodeLine,
@@ -393,7 +408,7 @@ export function reflowSourceLine(
       text,
       indent,
       tokens,
-      layout: computeLineLayout(tokens, indent, tabSize),
+      layout: { wrapIndent: indent },
     };
   });
 }
