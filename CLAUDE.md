@@ -100,6 +100,27 @@ The recipe (this is exactly how the prose-font screenshots were made):
 To compare configurations (e.g. an override), re-render with a different
 `--codebox-*` CSS variable on `.codebox` and take a second shot.
 
+## Invariant: a single line can mix fonts, including non-monospace ones
+
+**Never assume a line is uniform-width or monospace.** By design, string bodies
+render in a *proportional* prose font at their own size (`proseStrings`), while
+the surrounding code is monospace — so one visual line routinely mixes families
+**and** sizes, and weights/slants vary per token. Anything that reasons about
+width must be engineered for this:
+
+- **Measure in pixels, in the actual fonts — never in character columns.** A
+  "column" is meaningless across a proportional run. The chain reflow
+  (`src/reflow.ts`) takes an injected `Measurer` that measures each run in its
+  real font; the React layer builds it in `useReflowMeasure` (CodeBox.tsx).
+- **Reuse the existing measurement primitives; don't add a third.** Glyph
+  advances of *already-rendered* text come from DOM caret offsets
+  (`measurePrefixPx`) — exact for proportional fonts, ligatures, and tabs.
+  Widths of *hypothetical* (not-yet-rendered) text come from the shared
+  offscreen `measureCanvas` (`textPx`, `xHeightPerPx`), using the real computed
+  fonts and the `--codebox-prose-font*` variables. Pick whichever fits whether
+  the text is on screen yet; don't reinvent either.
+- Tabs, ligatures, and per-token weight/italic all change advance width too.
+
 ## Project basics
 
 ```bash

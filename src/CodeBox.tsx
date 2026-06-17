@@ -11,6 +11,7 @@ import {
 import type { TokenKind } from "./classify";
 import { highlightToLines } from "./highlight";
 import { lineStyle } from "./indent";
+import { reflowSourceLine, type Atom, type Measurer } from "./reflow";
 import type {
   CodeBoxProps,
   CodeLine,
@@ -88,6 +89,114 @@ function measurePrefixPx(el: HTMLElement, charCount: number): number | null {
 
 // One offscreen canvas, reused across all measurements.
 let measureCanvas: HTMLCanvasElement | null = null;
+
+/** Width in px of `text` in `font`, via the shared offscreen canvas. */
+function textPx(font: string, text: string): number {
+  if (typeof document === "undefined") return 0;
+  const canvas = (measureCanvas ??= document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  if (!ctx || !font) return 0;
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+interface ReflowMeasure {
+  /** Available content width in px (the layout budget). */
+  maxWidthPx: number;
+  measurer: Measurer;
+}
+
+/**
+ * Build a pixel measurer for the chain reflow that respects mixed fonts on a
+ * line. A line is NOT assumed monospace: prose-string runs are measured in the
+ * proportional prose font at its own size, code runs in the code font, each
+ * with the right weight/slant — so the fit decision matches what actually
+ * renders. Null until measured (SSR / pre-mount, or wrapping off). Re-measures
+ * on resize and after web fonts swap in.
+ */
+function useReflowMeasure(
+  ref: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  proseStrings: boolean,
+): ReflowMeasure | null {
+  const [state, setState] = useState<ReflowMeasure | null>(null);
+
+  useIsoLayoutEffect(() => {
+    if (!enabled) {
+      setState((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const el = ref.current;
+    if (!el) return;
+
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const codeFamily = cs.fontFamily;
+      const codeSize = cs.fontSize;
+      const proseFamily = cs.getPropertyValue("--codebox-prose-font").trim();
+      const proseSize =
+        cs.getPropertyValue("--codebox-prose-font-size-measured").trim() ||
+        cs.getPropertyValue("--codebox-prose-font-size").trim() ||
+        codeSize;
+
+      // Pick the canvas font for an atom: prose font for string bodies (when
+      // prose strings are on), code font otherwise, honoring bold/italic.
+      const fontFor = (a: Atom): string => {
+        const italic = a.fontStyle && a.fontStyle & 1 ? "italic " : "";
+        const weight = a.fontStyle && a.fontStyle & 2 ? "700" : cs.fontWeight;
+        const useProse = proseStrings && a.kind === "string" && !!proseFamily;
+        const size = useProse ? proseSize : codeSize;
+        const family = useProse ? proseFamily : codeFamily;
+        return `${italic}${weight} ${size} ${family}`;
+      };
+
+      const measurer: Measurer = {
+        spacePx: textPx(`${cs.fontWeight} ${codeSize} ${codeFamily}`, " ") || 1,
+        measure: (atoms) => {
+          let total = 0;
+          let runFont = "";
+          let runText = "";
+          const flushRun = () => {
+            if (runText) total += textPx(runFont, runText);
+            runText = "";
+          };
+          for (const a of atoms) {
+            const f = fontFor(a);
+            if (f !== runFont) {
+              flushRun();
+              runFont = f;
+            }
+            runText += a.ch;
+          }
+          flushRun();
+          return total;
+        },
+      };
+
+      const padL = parseFloat(cs.paddingLeft) || 0;
+      const padR = parseFloat(cs.paddingRight) || 0;
+      const maxWidthPx = Math.max(1, el.clientWidth - padL - padR);
+      setState({ maxWidthPx, measurer });
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    let cancelled = false;
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts?.ready) {
+      fonts.ready.then(() => {
+        if (!cancelled) measure();
+      });
+    }
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+    };
+  }, [ref, enabled, proseStrings]);
+
+  return state;
+}
 
 /**
  * The x-height of `family` per 1px of font-size, measured via canvas glyph
@@ -403,7 +512,7 @@ function PlainContent({
 
 function Line({
   line,
-  index,
+  lineNumber,
   wrap,
   hangingIndent,
   showLineNumbers,
@@ -413,7 +522,9 @@ function Line({
   renderToken,
 }: {
   line: CodeLine;
-  index: number;
+  /** Source line number to show in the gutter, or null for a continuation
+   *  line produced by reflow (keeps the gutter aligned but unnumbered). */
+  lineNumber: number | null;
 } & Required<
   Pick<
     RenderedCodeProps,
@@ -440,8 +551,12 @@ function Line({
   return (
     <span className="codebox__line">
       {showLineNumbers && (
-        <span className="codebox__ln" aria-hidden="true" data-line={index + 1}>
-          {index + 1}
+        <span
+          className="codebox__ln"
+          aria-hidden="true"
+          data-line={lineNumber ?? undefined}
+        >
+          {lineNumber ?? ""}
         </span>
       )}
       {useMarkers && comment ? (
@@ -487,6 +602,10 @@ export function RenderedCode({
   style,
 }: RenderedCodeProps) {
   const preRef = useRef<HTMLPreElement>(null);
+  // Font-aware width budget for reflowing `.`-chains to fit (only while
+  // soft-wrapping — scroll mode has no width limit). Null until measured, when
+  // lines render as-is.
+  const reflowMeasure = useReflowMeasure(preRef, wrap, proseStrings);
   // Size the prose font to match the code font's x-height (skipped when prose
   // strings are off, or when the user overrides --codebox-prose-font-size).
   const proseFontSize = useProseFontSizeVar(preRef, proseStrings);
@@ -506,20 +625,32 @@ export function RenderedCode({
       data-codebox-lang={data.lang}
     >
       <code className="codebox__code">
-        {data.lines.map((line, i) => (
-          <Line
-            key={i}
-            line={line}
-            index={i}
-            wrap={wrap}
-            hangingIndent={hangingIndent}
-            showLineNumbers={showLineNumbers}
-            proseStrings={proseStrings}
-            repeatCommentMarker={repeatCommentMarker}
-            tokenStyles={tokenStyles}
-            renderToken={renderToken}
-          />
-        ))}
+        {data.lines.flatMap((line, i) => {
+          // Reflow `.`-chains that don't fit the measured width into multiple
+          // visual lines; everything else (and chains that fit) stays one line.
+          const visual = reflowMeasure
+            ? reflowSourceLine(
+                line,
+                reflowMeasure.maxWidthPx,
+                data.tabSize,
+                reflowMeasure.measurer,
+              )
+            : [line];
+          return visual.map((sub, j) => (
+            <Line
+              key={`${i}-${j}`}
+              line={sub}
+              lineNumber={j === 0 ? i + 1 : null}
+              wrap={wrap}
+              hangingIndent={hangingIndent}
+              showLineNumbers={showLineNumbers}
+              proseStrings={proseStrings}
+              repeatCommentMarker={repeatCommentMarker}
+              tokenStyles={tokenStyles}
+              renderToken={renderToken}
+            />
+          ));
+        })}
       </code>
     </pre>
   );
