@@ -11,7 +11,13 @@
 export type TokenKind = "code" | "string" | "comment";
 
 const OPEN = new Set(["(", "[", "{"]);
+const CLOSE = new Set([")", "]", "}"]);
 const QUOTES = new Set(['"', "'", "`"]);
+
+/** First character of a member name (what a chain `.` must be followed by). */
+function isIdentStart(ch: string | undefined): boolean {
+  return ch !== undefined && /[A-Za-z_$]/.test(ch);
+}
 
 /** Map a token's TextMate scope list to a coarse kind. */
 export function classifyScopes(scopes: readonly string[]): TokenKind {
@@ -107,6 +113,42 @@ export function computeLineLayout(
     }
   }
 
+  // Method/property chain: the `.` member-access points that sit at
+  // bracket-depth 0 (outside any call arguments, array, or object). When a line
+  // strings several of them together — `foo.bar().baz().qux()` — it's a chain,
+  // and the right place to hang wrapped continuations is under the *first* dot,
+  // so each wrapped `.method()` stacks under the first one (the way a formatter
+  // would break the chain) instead of under the first call's arguments.
+  //
+  // Dots inside arguments live at depth > 0, so they never count; a lone dot
+  // (`obj.method(longArgs)`) isn't a chain and falls through to the bracket
+  // rule. We require the dot to be followed by an identifier start so a numeric
+  // literal's point (`3.14`) or a spread (`...x`) can't masquerade as a chain.
+  let depth = 0;
+  let firstChainDotCol = -1;
+  let firstChainDotIdx = -1;
+  let chainDotCount = 0;
+  for (let idx = 0; idx < chars.length; idx++) {
+    const c = chars[idx]!;
+    if (c.kind !== "code") continue;
+    if (OPEN.has(c.ch)) {
+      depth++;
+    } else if (CLOSE.has(c.ch)) {
+      if (depth > 0) depth--;
+    } else if (
+      depth === 0 &&
+      c.ch === "." &&
+      isIdentStart(chars[idx + 1]?.ch)
+    ) {
+      chainDotCount++;
+      if (firstChainDotIdx < 0) {
+        firstChainDotCol = c.col;
+        firstChainDotIdx = idx;
+      }
+    }
+  }
+  const isChain = chainDotCount >= 2;
+
   // First comment on the line (full-line or trailing).
   const firstCommentIdx = chars.findIndex((c) => c.kind === "comment");
   const firstComment =
@@ -158,6 +200,10 @@ export function computeLineLayout(
   } else if (stringContentCol !== undefined) {
     wrapIndent = stringContentCol;
     wrapIndentChars = stringBodyChars;
+  } else if (isChain) {
+    // Align under the first chain dot, so wrapped `.method()` calls stack.
+    wrapIndent = firstChainDotCol;
+    wrapIndentChars = firstChainDotIdx;
   } else if (firstOpenCol >= 0) {
     wrapIndent = firstOpenCol + 1;
     wrapIndentChars = firstOpenIdx + 1;
