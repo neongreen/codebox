@@ -192,7 +192,7 @@ function arrowHeaderEnd(atoms: Atom[], lo: number, hi: number): number {
     const a = atoms[i]!;
     if (a.kind !== "code") continue;
     if (OPEN.has(a.ch)) depth++;
-    else if (CLOSE.has(a.ch)) depth--;
+    else if (CLOSE.has(a.ch)) depth = Math.max(0, depth - 1);
     else if (depth === 0 && a.role === "arrow") {
       let j = i;
       while (j < hi && atoms[j]!.role === "arrow") j++; // span the whole `=>`
@@ -711,7 +711,7 @@ function matchJsxElement(atoms: Atom[], lo: number, hi: number): number {
         j++;
       }
       if (closing) {
-        depth--;
+        depth = Math.max(0, depth - 1);
         if (depth === 0) return j;
       } else {
         let p = j - 1;

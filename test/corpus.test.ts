@@ -34,6 +34,10 @@ const CORPUS: { lang: "typescript" | "tsx"; lines: string[] }[] = [
       "const url = base + '/api/' + version + '/users/' + userId;",
       "type Status = 'idle' | 'loading' | 'success' | 'error';",
       "export const value = computeSomething(alpha, beta, gamma, delta);",
+      // template literals: interpolation contents must stay inert (no break at
+      // the `+`/`?:` inside `${…}`) — they carry a string scope.
+      "const u = `result: ${a + b + c} and ${cond ? yes : no} end`;",
+      "log(`a ${x.y.z} b ${count} c`, secondArgument, thirdArgument);",
       "const x = veryLongName || anotherLongName || thirdFallbackValue;",
       "import { alpha, beta, gamma, delta, epsilon } from './module';",
       // malformed / partial

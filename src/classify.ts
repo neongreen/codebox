@@ -47,6 +47,11 @@ export function classifyRole(
   scopes: readonly string[],
   content: string,
 ): TokenRole {
+  // Comment/string first and front-first: a token carrying a `string`/`comment`
+  // scope is always treated as an opaque operand, even if it also carries an
+  // operator scope. This deliberately makes the contents of a template-literal
+  // interpolation (`` `${a + b}` ``) inert to reflow — every atom there keeps a
+  // `string.template` scope, so the `+` never becomes a top-level break.
   for (const s of scopes) {
     if (s.startsWith("comment") || s.startsWith("string")) return "operand";
   }
