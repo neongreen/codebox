@@ -220,6 +220,48 @@ describe("reflowLine: argument hugging", () => {
     );
   });
 
+  test("a last array argument hugs; earlier simple args stay on the open line", async () => {
+    const t = await toks("render(template, [headerRow, bodyRow, footerRow]);");
+    expect(reflowToString(t, 24)).toBe(
+      [
+        "render(template, [",
+        "  headerRow,",
+        "  bodyRow,",
+        "  footerRow",
+        "]);",
+      ].join("\n"),
+    );
+  });
+
+  test("a last object argument hugs", async () => {
+    const t = await toks("call(first, second, { alpha: 1, beta: 2, gamma: 3 });");
+    expect(reflowToString(t, 20)).toBe(
+      [
+        "call(first, second, {",
+        "  alpha: 1,",
+        "  beta: 2,",
+        "  gamma: 3",
+        "});",
+      ].join("\n"),
+    );
+  });
+
+  test("a callback earlier than the last arg is NOT robbed of its hug", async () => {
+    // `useEffect(cb, deps)`: the deps array must not hug — the callback should
+    // break, so we fall back to one-argument-per-line.
+    const t = await toks("useEffect(() => { doThing(); }, [dep1, dep2]);");
+    expect(reflowToString(t, 22)).toBe(
+      [
+        "useEffect(",
+        "  () => {",
+        "    doThing();",
+        "  },",
+        "  [dep1, dep2]",
+        ");",
+      ].join("\n"),
+    );
+  });
+
   test("hugging still preserves every non-space character", async () => {
     const code = "rows.map((r) => ({ id: r.id, name: r.name, ok: r.ok }))";
     const t = await toks(code);

@@ -889,6 +889,68 @@ function buildJsx(atoms: Atom[], lo: number, hi: number, indentUnit: number): Do
   return parts.length === 1 ? parts[0]! : { t: "concat", parts };
 }
 
+/** Top-level comma-separated segment ranges in [lo,hi) (commas excluded). JSX
+ *  and bracket interiors are skipped. */
+function topLevelCommaSegments(atoms: Atom[], lo: number, hi: number): [number, number][] {
+  const segs: [number, number][] = [];
+  let depth = 0;
+  let start = lo;
+  let i = lo;
+  while (i < hi) {
+    const a = atoms[i]!;
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
+      i++;
+      continue;
+    }
+    if (depth === 0 && isTagPunct(a, "<")) {
+      i = matchJsxElement(atoms, i, hi) + 1;
+      continue;
+    }
+    if (depth === 0 && a.kind === "code" && a.role === "comma") {
+      segs.push([start, i]);
+      start = i + 1;
+    }
+    i++;
+  }
+  segs.push([start, hi]);
+  return segs;
+}
+
+/** Index of the `([{` matching the close at `closeIdx`, scanning back to `lo`. */
+function backwardMatchOpen(atoms: Atom[], closeIdx: number, lo: number): number {
+  let depth = 0;
+  for (let j = closeIdx; j >= lo; j--) {
+    const a = atoms[j]!;
+    if (a.kind !== "code") continue;
+    if (CLOSE.has(a.ch)) depth++;
+    else if (OPEN.has(a.ch)) {
+      depth--;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Is [lo,hi) a "huggable" last argument — an object/array literal, or a callback
+ * whose block body is an object/array/block — that should expand onto the
+ * call's opening line (`render(x, [` … `])`)? It must end with `}`/`]` whose
+ * matching open is reached through only a simple header (a callee path or an
+ * arrow `=>`), never across an operator.
+ */
+function isHuggableLast(atoms: Atom[], lo: number, hi: number): boolean {
+  if (hi <= lo) return false;
+  const close = atoms[hi - 1]!;
+  if (!(close.kind === "code" && (close.ch === "}" || close.ch === "]"))) return false;
+  const open = backwardMatchOpen(atoms, hi - 1, lo);
+  if (open < 0) return false;
+  if (topLevelBinaryOps(atoms, lo, open).length > 0) return false;
+  if (firstTopLevel(atoms, lo, open, (a) => a.role === "op-ternary") >= 0) return false;
+  return true;
+}
+
 /**
  * Comma- (and, in a `{}` block, semicolon-) separated items, each an expression
  * that breaks on its own. Used for the contents of a bracket group.
@@ -1032,6 +1094,32 @@ function buildBracket(
     hasInnerCloser = cHas;
     if (cHas) closersAtoms.unshift(cAtom!);
     break;
+  }
+
+  // Last-argument hugging: `render(x, [` … `])`. When a call's final argument
+  // is an object/array literal (or block-bodied callback) and the earlier
+  // arguments are simple, keep the earlier ones flat on the opening line and let
+  // only the last argument expand — instead of one-argument-per-line. Skipped
+  // when an earlier argument is itself a callback (it should hug instead), so
+  // `useEffect(() => {…}, deps)` still breaks its callback.
+  if (hasInnerCloser && innerOpenChar === "(") {
+    const segs = topLevelCommaSegments(atoms, innerS, innerE);
+    if (segs.length >= 2) {
+      const [ls, le] = trimRange(atoms, segs[segs.length - 1]![0], innerE);
+      const prefixHasCallback = segs
+        .slice(0, -1)
+        .some(([s, e]) => firstTopLevel(atoms, s, e, (a) => a.role === "arrow") >= 0);
+      if (!prefixHasCallback && isHuggableLast(atoms, ls, le)) {
+        return {
+          t: "concat",
+          parts: [
+            { t: "text", atoms: [...openersAtoms, ...innerLead, ...atoms.slice(innerS, ls)] },
+            buildExpr(atoms, ls, le, indentUnit),
+            { t: "text", atoms: [...innerTrail, ...midTrail, ...closersAtoms] },
+          ],
+        };
+      }
+    }
   }
 
   // `{}` is a block or object: break on `;` as well as `,`.
