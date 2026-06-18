@@ -132,6 +132,33 @@ function matchClose(atoms: Atom[], i: number, hi: number): number {
   return hi - 1;
 }
 
+/** Nesting change for the bracket/grouping at `a`: `()[]{}` count, and so do
+ *  type-argument angle brackets (a `<`/`>` with the `typeparam` role — never a
+ *  comparison `<`, which keeps role `op-compare`). Everything else is 0. This is
+ *  what lets every depth-0 scan below see inside `Map<K, V>` as one unit. */
+function bracketDelta(a: Atom): number {
+  if (a.kind !== "code") return 0;
+  if (OPEN.has(a.ch) || (a.role === "typeparam" && a.ch === "<")) return 1;
+  if (CLOSE.has(a.ch) || (a.role === "typeparam" && a.ch === ">")) return -1;
+  return 0;
+}
+
+/** Index of the `>` that closes a type-argument list opened by the `<` at `i`
+ *  (both `typeparam`-roled), or -1 if unterminated. */
+function matchTypeParam(atoms: Atom[], i: number, hi: number): number {
+  let depth = 0;
+  for (let j = i; j < hi; j++) {
+    const a = atoms[j]!;
+    if (a.kind !== "code" || a.role !== "typeparam") continue;
+    if (a.ch === "<") depth++;
+    else if (a.ch === ">") {
+      depth--;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
+}
+
 // --- Precedence-aware expression parsing ----------------------------------
 //
 // The builders below form a small recursive-descent pretty-printer over the
@@ -221,14 +248,10 @@ function topLevelBinaryOps(atoms: Atom[], lo: number, hi: number): OpSpan[] {
       i++;
       continue;
     }
-    if (OPEN.has(a.ch)) {
-      depth++;
-      i++;
-      continue;
-    }
-    if (CLOSE.has(a.ch)) {
-      if (depth > 0) depth--;
-      if (depth === 0) lastWasValue = true; // a bracketed primary is a value
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
+      if (depth === 0 && d < 0) lastWasValue = true; // a bracketed primary is a value
       i++;
       continue;
     }
@@ -252,7 +275,7 @@ function topLevelBinaryOps(atoms: Atom[], lo: number, hi: number): OpSpan[] {
   return spans;
 }
 
-/** First depth-0 index in [lo,hi) whose atom has one of `roles`, or -1. */
+/** First depth-0 index in [lo,hi) whose atom satisfies `match`, or -1. */
 function firstTopLevel(
   atoms: Atom[],
   lo: number,
@@ -262,11 +285,12 @@ function firstTopLevel(
   let depth = 0;
   for (let i = lo; i < hi; i++) {
     const a = atoms[i]!;
-    if (a.kind !== "code") continue;
-    if (OPEN.has(a.ch)) depth++;
-    else if (CLOSE.has(a.ch)) {
-      if (depth > 0) depth--;
-    } else if (depth === 0 && match(a)) return i;
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
+      continue;
+    }
+    if (depth === 0 && match(a)) return i;
   }
   return -1;
 }
@@ -431,11 +455,12 @@ function buildTernary(
   let colon = -1;
   for (let i = qIdx + 1; i < hi; i++) {
     const a = atoms[i]!;
-    if (a.kind !== "code") continue;
-    if (OPEN.has(a.ch)) depth++;
-    else if (CLOSE.has(a.ch)) {
-      if (depth > 0) depth--;
-    } else if (depth === 0 && a.role === "op-ternary") {
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
+      continue;
+    }
+    if (depth === 0 && a.role === "op-ternary") {
       if (a.ch === "?") nested++;
       else if (a.ch === ":") {
         if (nested === 0) {
@@ -608,13 +633,9 @@ function buildItems(
   };
   while (i < hi) {
     const a = atoms[i]!;
-    if (a.kind === "code" && OPEN.has(a.ch)) {
-      depth++;
-      i++;
-      continue;
-    }
-    if (a.kind === "code" && CLOSE.has(a.ch)) {
-      if (depth > 0) depth--;
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
       i++;
       continue;
     }
@@ -780,11 +801,62 @@ function buildSeq(atoms: Atom[], lo: number, hi: number, indentUnit: number): Do
       i = close + 1;
       continue;
     }
+    if (a.kind === "code" && a.role === "typeparam" && a.ch === "<") {
+      const close = matchTypeParam(atoms, i, hi);
+      if (close > i) {
+        flush();
+        parts.push(buildTypeArgs(atoms, i, close, indentUnit));
+        i = close + 1;
+        continue;
+      }
+    }
     buf.push(a);
     i++;
   }
   flush();
   return parts.length === 1 ? parts[0]! : { t: "concat", parts };
+}
+
+/**
+ * A type-argument list `<A, B, …>`: a breakable group like a call's `(`, with
+ * each argument on its own line when it overflows. Distinguished from a
+ * comparison purely by token role, so `a < b` never lands here.
+ */
+function buildTypeArgs(
+  atoms: Atom[],
+  openIdx: number,
+  closeIdx: number,
+  indentUnit: number,
+): Doc {
+  const [s, e] = trimRange(atoms, openIdx + 1, closeIdx);
+  if (s >= e) {
+    return { t: "text", atoms: atoms.slice(openIdx, closeIdx + 1) };
+  }
+  const items = buildItems(atoms, s, e, false, indentUnit);
+  return {
+    t: "concat",
+    parts: [
+      { t: "text", atoms: [atoms[openIdx]!] },
+      {
+        t: "group",
+        doc: {
+          t: "concat",
+          parts: [
+            {
+              t: "nest",
+              indent: indentUnit,
+              doc: {
+                t: "concat",
+                parts: [{ t: "line", flat: atoms.slice(openIdx + 1, s) }, items],
+              },
+            },
+            { t: "line", flat: atoms.slice(e, closeIdx) },
+            { t: "text", atoms: [atoms[closeIdx]!] },
+          ],
+        },
+      },
+    ],
+  };
 }
 
 // --- Layout (Wadler/Leijen best/fits) -------------------------------------

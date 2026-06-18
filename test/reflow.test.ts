@@ -276,13 +276,28 @@ describe("reflowLine: precedence-aware expression breaking", () => {
     );
   });
 
-  test("a generic `<` is not a comparison: type args stay, the call breaks", async () => {
+  test("a generic `<` is a breakable type-arg group, never a comparison", async () => {
     const t = await toks("const s = make<string, number>(seed);");
-    // The `<…>` is type punctuation, never split as `<` / `>` comparisons.
-    const out = reflowToString(t, 18);
-    expect(out).toContain("make<string, number>(");
-    expect(out.replace(/\s+/g, "")).toBe(
-      "const s = make<string, number>(seed);".replace(/\s+/g, ""),
+    // Wide: stays inline. The `<…>` is type punctuation, not two comparisons.
+    expect(reflowToString(t, 80)).toBe("const s = make<string, number>(seed);");
+    // Narrow: the type-argument list breaks like a call's arguments would —
+    // one per line — rather than being split as `<` / `>` operators.
+    expect(reflowToString(t, 16)).toBe(
+      ["const s = make<", "  string,", "  number", ">(seed);"].join("\n"),
+    );
+  });
+
+  test("a type-argument list breaks; a call that still fits stays inline", async () => {
+    const t = await toks("useQuery<ResponseType, ErrorType>(key, fetcher);");
+    expect(reflowToString(t, 20)).toBe(
+      ["useQuery<", "  ResponseType,", "  ErrorType", ">(key, fetcher);"].join("\n"),
+    );
+  });
+
+  test("comparison `<`/`>` still break as operators, not type args", async () => {
+    const t = await toks("const ok = aa < bb && cc > dd;");
+    expect(reflowToString(t, 12)).toBe(
+      ["const ok =", "  aa < bb &&", "  cc > dd;"].join("\n"),
     );
   });
 
