@@ -1,6 +1,6 @@
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createOnigurumaEngine } from "shiki/engine/oniguruma";
-import { classifyScopes, computeLineLayout } from "./classify";
+import { classifyRole, classifyScopes, computeLineLayout } from "./classify";
 import { leadingIndentWidth } from "./indent";
 import {
   LANG_ALIASES,
@@ -117,16 +117,30 @@ export async function highlightToLines(
 
   const lines: CodeLine[] = result.tokens.map((lineTokens) => {
     const text = lineTokens.map((t) => t.content).join("");
-    const tokens = lineTokens.map((t) => {
-      const scopes =
-        t.explanation?.flatMap((e) => e.scopes.map((s) => s.scopeName)) ?? [];
-      return {
-        content: t.content,
-        color: t.color,
-        bgColor: t.bgColor,
-        fontStyle: t.fontStyle,
-        kind: classifyScopes(scopes),
-      };
+    // Split each Shiki token along its `explanation` segments. A single token
+    // can merge characters with different scopes (e.g. `>(arg)` is a generic
+    // close, a brace and another brace), which makes its union of scopes
+    // useless for parsing; the per-segment explanation keeps scopes clean, so
+    // each emitted token has one role. Styling is unchanged — the segments
+    // share the parent token's color and re-coalesce at render time.
+    const tokens = lineTokens.flatMap((t) => {
+      const segments =
+        t.explanation && t.explanation.length > 0
+          ? t.explanation.map((e) => ({
+              content: e.content,
+              scopes: e.scopes.map((s) => s.scopeName),
+            }))
+          : [{ content: t.content, scopes: [] as string[] }];
+      return segments
+        .filter((seg) => seg.content.length > 0)
+        .map((seg) => ({
+          content: seg.content,
+          color: t.color,
+          bgColor: t.bgColor,
+          fontStyle: t.fontStyle,
+          kind: classifyScopes(seg.scopes),
+          role: classifyRole(seg.scopes, seg.content),
+        }));
     });
     const indent = leadingIndentWidth(text, tabSize);
     return {
