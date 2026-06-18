@@ -18,7 +18,7 @@
  * Pure and unit-tested; the React layer measures the width and calls in.
  */
 
-import { chainRegion, type TokenKind } from "./classify";
+import { chainRegion, type TokenKind, type TokenRole } from "./classify";
 import { leadingIndentWidth } from "./indent";
 import type { CodeLine, CodeToken } from "./types";
 
@@ -32,6 +32,8 @@ interface Atom {
   bgColor?: string;
   fontStyle?: number;
   kind: TokenKind;
+  /** Parser role inherited from the source token (see {@link TokenRole}). */
+  role: TokenRole;
 }
 
 function toAtoms(tokens: readonly CodeToken[]): Atom[] {
@@ -44,6 +46,7 @@ function toAtoms(tokens: readonly CodeToken[]): Atom[] {
         bgColor: t.bgColor,
         fontStyle: t.fontStyle,
         kind: t.kind,
+        role: t.role ?? "operand",
       });
     }
   }
@@ -519,7 +522,8 @@ export function reflowLine(
       if (o.atoms.length) lines[lines.length - 1]!.push(...o.atoms);
     } else {
       const indent: Atom[] = [];
-      for (let s = 0; s < o.indent; s++) indent.push({ ch: " ", kind: "code" });
+      for (let s = 0; s < o.indent; s++)
+        indent.push({ ch: " ", kind: "code", role: "operand" });
       lines.push(indent);
     }
   }

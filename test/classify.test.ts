@@ -1,7 +1,74 @@
 import { describe, expect, test } from "bun:test";
-import { classifyScopes, computeLineLayout } from "../src/classify";
+import {
+  classifyRole,
+  classifyScopes,
+  computeLineLayout,
+  type TokenRole,
+} from "../src/classify";
 import { highlightToLines } from "../src/highlight";
 import { leadingIndentWidth } from "../src/indent";
+
+describe("classifyRole (unit)", () => {
+  test("arrow, accessor, ternary, comma, semicolon", () => {
+    expect(classifyRole(["storage.type.function.arrow.tsx"], "=>")).toBe("arrow");
+    expect(classifyRole(["punctuation.accessor.tsx"], ".")).toBe("accessor");
+    expect(classifyRole(["punctuation.accessor.optional.tsx"], "?.")).toBe(
+      "accessor",
+    );
+    expect(classifyRole(["keyword.operator.ternary.tsx"], "?")).toBe("op-ternary");
+    expect(classifyRole(["punctuation.separator.comma.tsx"], ",")).toBe("comma");
+    expect(classifyRole(["punctuation.terminator.statement.tsx"], ";")).toBe(
+      "semicolon",
+    );
+  });
+  test("the three faces of `<`", () => {
+    expect(
+      classifyRole(["punctuation.definition.typeparameters.begin.tsx"], "<"),
+    ).toBe("typeparam");
+    expect(classifyRole(["keyword.operator.relational.tsx"], "<")).toBe(
+      "op-compare",
+    );
+    expect(
+      classifyRole(["meta.tag.tsx", "punctuation.definition.tag.begin.tsx"], "<"),
+    ).toBe("jsx-punct");
+  });
+  test("arithmetic splits multiplicative from additive by glyph", () => {
+    expect(classifyRole(["keyword.operator.arithmetic.tsx"], "+")).toBe(
+      "op-additive",
+    );
+    expect(classifyRole(["keyword.operator.arithmetic.tsx"], "*")).toBe(
+      "op-multiplicative",
+    );
+  });
+  test("strings and comments are operands (never looked inside)", () => {
+    expect(classifyRole(["string.quoted.double.tsx"], '"x"')).toBe("operand");
+    expect(classifyRole(["comment.line.tsx"], "// hi")).toBe("operand");
+    expect(classifyRole(["variable.other.readwrite.tsx"], "foo")).toBe("operand");
+  });
+});
+
+describe("classifyRole (end-to-end via Shiki)", () => {
+  test("roles flow through the highlight pipeline", async () => {
+    const data = await highlightToLines(
+      "const r = a && b ? items.map((x) => x.id) : fn<string>(y);",
+      { lang: "tsx" },
+    );
+    const byRole = new Map<string, Set<TokenRole>>();
+    for (const t of data.lines[0]!.tokens) {
+      const key = t.content.trim();
+      if (!key) continue;
+      if (!byRole.has(key)) byRole.set(key, new Set());
+      if (t.role) byRole.get(key)!.add(t.role);
+    }
+    const has = (ch: string, role: TokenRole) => byRole.get(ch)?.has(role);
+    expect(has("&&", "op-logical")).toBe(true);
+    expect(has("?", "op-ternary")).toBe(true);
+    expect(has(":", "op-ternary")).toBe(true);
+    expect(has("=>", "arrow")).toBe(true);
+    expect(has("<", "typeparam")).toBe(true);
+    expect(has(">", "typeparam")).toBe(true);
+  });
+});
 
 describe("classifyScopes", () => {
   test("comment scopes win", () => {

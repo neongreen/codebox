@@ -10,6 +10,77 @@
 
 export type TokenKind = "code" | "string" | "comment";
 
+/**
+ * A finer, parser-oriented role derived from the same TextMate scopes. Where
+ * {@link TokenKind} is only what styling needs (code/string/comment), this is
+ * what the reflow *parser* needs: it disambiguates the characters that look
+ * alike but mean different things — `<` as a generic bracket vs a comparison vs
+ * a JSX tag, `?`/`:` ternary vs `?.` optional chaining, `=>` vs `=`, and which
+ * operators bind tighter than which. Everything the parser treats as a plain
+ * operand (identifiers, numbers, keywords, brackets, …) is left as "operand".
+ */
+export type TokenRole =
+  | "operand" // identifiers, numbers, keywords, brackets, punctuation — operands
+  | "op-assign" // =, +=, … (lowest-binding, splits an assignment)
+  | "op-ternary" // ? and : of a conditional expression
+  | "op-logical" // &&, ||, ??
+  | "op-compare" // ==, ===, <, >, <=, instanceof, …
+  | "op-additive" // + - (binary)
+  | "op-multiplicative" // * / %
+  | "op-bitwise" // & | ^ << >> (value-level)
+  | "op-type" // | & in a type (union/intersection)
+  | "op-other" // any other keyword.operator.* (typeof, in, as, …)
+  | "arrow" // =>
+  | "accessor" // . or ?. (member access; the chain spine)
+  | "comma"
+  | "semicolon"
+  | "typeparam" // < or > delimiting type arguments / parameters
+  | "jsx-punct" // < > / of a JSX tag
+  | "jsx-tag"; // a JSX element/attribute name
+
+/**
+ * Map a token's TextMate scopes (most-specific last) to a {@link TokenRole}.
+ * Strings and comments collapse to "operand" — the parser never looks inside
+ * them. Scanned end-first so the innermost scope wins.
+ */
+export function classifyRole(
+  scopes: readonly string[],
+  content: string,
+): TokenRole {
+  for (const s of scopes) {
+    if (s.startsWith("comment") || s.startsWith("string")) return "operand";
+  }
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    const s = scopes[i]!;
+    if (s.startsWith("storage.type.function.arrow")) return "arrow";
+    if (s.startsWith("punctuation.accessor")) return "accessor";
+    if (s.startsWith("punctuation.separator.comma")) return "comma";
+    if (s.startsWith("punctuation.terminator")) return "semicolon";
+    if (s.startsWith("punctuation.definition.typeparameters")) return "typeparam";
+    if (s.startsWith("punctuation.definition.tag")) return "jsx-punct";
+    if (s.startsWith("entity.name.tag")) return "jsx-tag";
+    if (s.startsWith("keyword.operator.ternary")) return "op-ternary";
+    if (s.startsWith("keyword.operator.logical")) return "op-logical";
+    if (s.startsWith("keyword.operator.assignment")) return "op-assign";
+    if (
+      s.startsWith("keyword.operator.comparison") ||
+      s.startsWith("keyword.operator.relational")
+    )
+      return "op-compare";
+    if (s.startsWith("keyword.operator.arithmetic")) {
+      // The grammar lumps + - * / % under one scope; split by glyph so
+      // multiplication binds tighter than addition.
+      return content === "*" || content === "/" || content === "%"
+        ? "op-multiplicative"
+        : "op-additive";
+    }
+    if (s.startsWith("keyword.operator.bitwise")) return "op-bitwise";
+    if (s.startsWith("keyword.operator.type")) return "op-type";
+    if (s.startsWith("keyword.operator")) return "op-other";
+  }
+  return "operand";
+}
+
 const OPEN = new Set(["(", "[", "{"]);
 const CLOSE = new Set([")", "]", "}"]);
 const QUOTES = new Set(['"', "'", "`"]);

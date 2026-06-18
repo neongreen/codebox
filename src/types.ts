@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import type { LineLayout, TokenKind } from "./classify";
+import type { LineLayout, TokenKind, TokenRole } from "./classify";
 
 /** Languages codebox ships with grammars for out of the box. */
 export const SUPPORTED_LANGS = [
@@ -39,6 +39,13 @@ export interface CodeToken {
   fontStyle?: number;
   /** Coarse classification from TextMate scopes: code / string / comment. */
   kind: TokenKind;
+  /**
+   * Finer, parser-oriented role from the same scopes (operator precedence,
+   * ternary vs optional chaining, generic vs JSX `<`, …). Drives reflow's
+   * precedence-aware breaking; defaults to "operand" when absent. See
+   * {@link TokenRole}.
+   */
+  role?: TokenRole;
 }
 
 /** One source line, decomposed into tokens plus its measured layout. */
