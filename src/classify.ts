@@ -48,12 +48,13 @@ export function classifyRole(
   content: string,
 ): TokenRole {
   // Comment/string first and front-first: a token carrying a `string`/`comment`
-  // scope is always treated as an opaque operand, even if it also carries an
-  // operator scope. This deliberately makes the contents of a template-literal
-  // interpolation (`` `${a + b}` ``) inert to reflow — every atom there keeps a
-  // `string.template` scope, so the `+` never becomes a top-level break.
+  // scope is treated as an opaque operand, even if it also carries an operator
+  // scope — EXCEPT a template-literal `${…}` interpolation, which is real code
+  // and must keep its operator/bracket roles so the expression inside it breaks.
+  const interp = isTemplateInterpolation(scopes);
   for (const s of scopes) {
-    if (s.startsWith("comment") || s.startsWith("string")) return "operand";
+    if (s.startsWith("comment")) return "operand";
+    if (s.startsWith("string") && !interp) return "operand";
   }
   for (let i = scopes.length - 1; i >= 0; i--) {
     const s = scopes[i]!;
@@ -153,15 +154,24 @@ export function chainRegion(
   return { start, dots: regionDots };
 }
 
+/** True when these scopes are inside a template-literal `${…}` interpolation —
+ *  real code that merely nests under a `string.template` scope. */
+function isTemplateInterpolation(scopes: readonly string[]): boolean {
+  return scopes.some((s) => s.startsWith("meta.template.expression"));
+}
+
 /** Map a token's TextMate scope list to a coarse kind. */
 export function classifyScopes(scopes: readonly string[]): TokenKind {
   for (const s of scopes) {
     if (s.startsWith("comment")) return "comment";
   }
-  for (const s of scopes) {
-    // Treat string literals as strings, but leave regular expressions as code.
-    if (s.startsWith("string") && !s.startsWith("string.regexp")) {
-      return "string";
+  // A `${…}` interpolation is code even though it sits inside string.template.
+  if (!isTemplateInterpolation(scopes)) {
+    for (const s of scopes) {
+      // Treat string literals as strings, but leave regular expressions as code.
+      if (s.startsWith("string") && !s.startsWith("string.regexp")) {
+        return "string";
+      }
     }
   }
   return "code";
