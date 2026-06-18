@@ -10,6 +10,12 @@ async function toks(code: string): Promise<CodeToken[]> {
   return data.lines[0]!.tokens;
 }
 
+/** Same, but with the TSX grammar so JSX gets its proper token roles. */
+async function tsxToks(code: string): Promise<CodeToken[]> {
+  const data = await highlightToLines(code, { lang: "tsx" });
+  return data.lines[0]!.tokens;
+}
+
 describe("reflowLine: chain reformatting", () => {
   test("a line with no operators or brackets is left untouched", async () => {
     const t = await toks("const value = singleLongIdentifierWithNoBreakPoints;");
@@ -305,6 +311,63 @@ describe("reflowLine: precedence-aware expression breaking", () => {
     const code = "const z = a && b ? c + d * e : fn(g, h) || i;";
     const t = await toks(code);
     for (const width of [6, 10, 14, 20, 30, 80, 500]) {
+      expect(reflowToString(t, width).replace(/\s+/g, "")).toBe(
+        code.replace(/\s+/g, ""),
+      );
+    }
+  });
+});
+
+describe("reflowLine: JSX", () => {
+  test("attributes break one per line; > and close tag dedent, children indent", async () => {
+    const t = await tsxToks(
+      'const el = <Button onClick={go} disabled={busy}>Save</Button>;',
+    );
+    expect(reflowToString(t, 24)).toBe(
+      [
+        "const el = <Button",
+        "  onClick={go}",
+        "  disabled={busy}",
+        ">",
+        "  Save",
+        "</Button>;",
+      ].join("\n"),
+    );
+  });
+
+  test("a self-closing tag keeps its `/>` and the space before it", async () => {
+    const t = await tsxToks('const x = <Icon name="star" size={16} />;');
+    expect(reflowToString(t, 20)).toBe(
+      ["const x = <Icon", '  name="star"', "  size={16}", "/>;"].join("\n"),
+    );
+  });
+
+  test("element children stack one per line; a tag with no attributes stays intact", async () => {
+    const t = await tsxToks("<List><Item id={1} /><Item id={2} /></List>");
+    expect(reflowToString(t, 18)).toBe(
+      ["<List>", "  <Item id={1} />", "  <Item id={2} />", "</List>"].join("\n"),
+    );
+  });
+
+  test("text and {expr} children stay inline together", async () => {
+    const t = await tsxToks("<span>Hello {name} now</span>");
+    expect(reflowToString(t, 18)).toBe(
+      ["<span>", "  Hello {name} now", "</span>"].join("\n"),
+    );
+  });
+
+  test("a ternary with JSX branches breaks as a ternary, branches intact", async () => {
+    const t = await tsxToks("const c = ok ? <Yes label={l} /> : <No reason={r} />;");
+    expect(reflowToString(t, 22)).toBe(
+      ["const c = ok", "  ? <Yes label={l} />", "  : <No reason={r} />;"].join("\n"),
+    );
+  });
+
+  test("never alters non-space characters across JSX breaks", async () => {
+    const code =
+      '<Form onSubmit={save}><Field name="a" /><Field name="b" />{footer}</Form>';
+    const t = await tsxToks(code);
+    for (const width of [8, 14, 20, 30, 60, 500]) {
       expect(reflowToString(t, width).replace(/\s+/g, "")).toBe(
         code.replace(/\s+/g, ""),
       );

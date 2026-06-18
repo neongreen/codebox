@@ -255,6 +255,11 @@ function topLevelBinaryOps(atoms: Atom[], lo: number, hi: number): OpSpan[] {
       i++;
       continue;
     }
+    if (depth === 0 && isTagPunct(a, "<")) {
+      i = matchJsxElement(atoms, i, hi) + 1; // a JSX element is one value
+      lastWasValue = true;
+      continue;
+    }
     if (depth !== 0 || isSpace(a)) {
       i++;
       continue;
@@ -275,7 +280,8 @@ function topLevelBinaryOps(atoms: Atom[], lo: number, hi: number): OpSpan[] {
   return spans;
 }
 
-/** First depth-0 index in [lo,hi) whose atom satisfies `match`, or -1. */
+/** First depth-0 index in [lo,hi) whose atom satisfies `match`, or -1. JSX
+ *  elements are skipped whole — operators inside a tag are not top level. */
 function firstTopLevel(
   atoms: Atom[],
   lo: number,
@@ -290,23 +296,44 @@ function firstTopLevel(
       depth = Math.max(0, depth + d);
       continue;
     }
+    if (depth === 0 && isTagPunct(a, "<")) {
+      i = matchJsxElement(atoms, i, hi);
+      continue;
+    }
     if (depth === 0 && match(a)) return i;
   }
   return -1;
 }
 
-/** Does the range contain JSX at depth 0? While JSX has its own (not yet
- *  implemented) layout, we keep such lines as plain primaries so operator
- *  splitting doesn't mis-handle attribute `=` and `<`/`>`. */
+/** Does a JSX element begin at depth 0 in [lo,hi)? (A raw scan — unlike the
+ *  other scanners it must *not* skip JSX, it is what detects it.) */
 function hasTopLevelJsx(atoms: Atom[], lo: number, hi: number): boolean {
-  return (
-    firstTopLevel(
-      atoms,
-      lo,
-      hi,
-      (a) => a.role === "jsx-punct" || a.role === "jsx-tag",
-    ) >= 0
-  );
+  let depth = 0;
+  for (let i = lo; i < hi; i++) {
+    const a = atoms[i]!;
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
+      continue;
+    }
+    if (depth === 0 && isTagPunct(a, "<")) return true;
+  }
+  return false;
+}
+
+/** Index of the first depth-0 JSX element opener `<` in [lo,hi), or -1. */
+function firstJsx(atoms: Atom[], lo: number, hi: number): number {
+  let depth = 0;
+  for (let i = lo; i < hi; i++) {
+    const a = atoms[i]!;
+    const d = bracketDelta(a);
+    if (d !== 0) {
+      depth = Math.max(0, depth + d);
+      continue;
+    }
+    if (depth === 0 && isTagPunct(a, "<")) return i;
+  }
+  return -1;
 }
 
 /**
@@ -315,7 +342,11 @@ function hasTopLevelJsx(atoms: Atom[], lo: number, hi: number): boolean {
  */
 function buildExpr(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc {
   if (lo >= hi) return { t: "text", atoms: [] };
-  if (hasTopLevelJsx(atoms, lo, hi)) return buildPrimary(atoms, lo, hi, indentUnit);
+  // A JSX element is its own grammar; parse it before any operator splitting so
+  // attribute `=` and tag `<`/`>` aren't mistaken for assignment/comparison.
+  // (The operator scanners below skip JSX elements whole, so a wrapping ternary
+  // or assignment is still found correctly; bare/leading JSX is caught here.)
+  if (startsJsx(atoms, lo, hi)) return buildJsx(atoms, lo, hi, indentUnit);
 
   // Loosest, right-associative constructs: pick the leftmost of assignment,
   // arrow and ternary — whichever opens first is the outer structure
@@ -460,6 +491,10 @@ function buildTernary(
       depth = Math.max(0, depth + d);
       continue;
     }
+    if (depth === 0 && isTagPunct(a, "<")) {
+      i = matchJsxElement(atoms, i, hi);
+      continue;
+    }
     if (depth === 0 && a.role === "op-ternary") {
       if (a.ch === "?") nested++;
       else if (a.ch === ":") {
@@ -562,6 +597,16 @@ function buildBinary(
  * or otherwise a flat run of text and independently-breakable bracket groups.
  */
 function buildPrimary(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc {
+  // JSX reached as a primary (e.g. `return <App … />`): emit the prefix text,
+  // then parse the element. Operators never sit between the prefix and the tag
+  // (those split higher up), so the prefix is plain text.
+  const jsx = firstJsx(atoms, lo, hi);
+  if (jsx >= 0) {
+    const parts: Doc[] = [];
+    if (jsx > lo) parts.push({ t: "text", atoms: atoms.slice(lo, jsx) });
+    parts.push(buildJsx(atoms, jsx, hi, indentUnit));
+    return parts.length === 1 ? parts[0]! : { t: "concat", parts };
+  }
   const region = chainRegion(atoms.slice(lo, hi));
   // Only a chain with at least one *call* breaks; pure property access
   // (`user.profile.settings`) stays intact, the way a formatter leaves it.
@@ -605,6 +650,245 @@ function buildPrimary(atoms: Atom[], lo: number, hi: number, indentUnit: number)
   return buildSeq(atoms, lo, hi, indentUnit);
 }
 
+// --- JSX -------------------------------------------------------------------
+
+/** First non-whitespace index in [lo,hi), or hi. */
+function firstSignificant(atoms: Atom[], lo: number, hi: number): number {
+  let i = lo;
+  while (i < hi && isSpace(atoms[i]!)) i++;
+  return i;
+}
+
+/** Does [lo,hi) begin with a JSX element opener `<Tag`? */
+function startsJsx(atoms: Atom[], lo: number, hi: number): boolean {
+  const i = firstSignificant(atoms, lo, hi);
+  return (
+    i < hi &&
+    atoms[i]!.kind === "code" &&
+    atoms[i]!.role === "jsx-punct" &&
+    atoms[i]!.ch === "<"
+  );
+}
+
+/** A JSX-tag `<`/`>` at brace depth 0 (not one buried in a `{expr}` attribute
+ *  or child). */
+function isTagPunct(a: Atom, ch: string): boolean {
+  return a.kind === "code" && a.role === "jsx-punct" && a.ch === ch;
+}
+
+/**
+ * Index of the final `>` that closes the JSX element opened by the `<` at `lo`,
+ * matching nested elements and self-closing tags. Returns `hi-1` if unbalanced
+ * (tolerant — a partial element still lays out).
+ */
+function matchJsxElement(atoms: Atom[], lo: number, hi: number): number {
+  let i = lo;
+  let depth = 0;
+  let brace = 0;
+  while (i < hi) {
+    const a = atoms[i]!;
+    if (a.kind === "code" && OPEN.has(a.ch)) {
+      brace++;
+      i++;
+      continue;
+    }
+    if (a.kind === "code" && CLOSE.has(a.ch)) {
+      if (brace > 0) brace--;
+      i++;
+      continue;
+    }
+    if (brace === 0 && isTagPunct(a, "<")) {
+      const closing = i + 1 < hi && atoms[i + 1]!.ch === "/"; // `</`
+      // Walk to this tag's own `>` (skipping any `{…}` attribute values).
+      let j = i + 1;
+      let b = 0;
+      while (j < hi) {
+        const x = atoms[j]!;
+        if (x.kind === "code" && OPEN.has(x.ch)) b++;
+        else if (x.kind === "code" && CLOSE.has(x.ch)) {
+          if (b > 0) b--;
+        } else if (b === 0 && isTagPunct(x, ">")) break;
+        j++;
+      }
+      if (closing) {
+        depth--;
+        if (depth === 0) return j;
+      } else {
+        let p = j - 1;
+        while (p > i && isSpace(atoms[p]!)) p--;
+        const selfClose = p > i && atoms[p]!.ch === "/";
+        if (!selfClose) depth++;
+        if (depth === 0) return j; // top-level self-close
+      }
+      i = j + 1;
+      continue;
+    }
+    i++;
+  }
+  return hi - 1;
+}
+
+/** Split a JSX attribute region into attribute ranges, breaking only at
+ *  code-kind whitespace at brace depth 0 (so `title="a b"` stays one attr). */
+function splitJsxAttrs(atoms: Atom[], lo: number, hi: number): [number, number][] {
+  const attrs: [number, number][] = [];
+  let i = lo;
+  while (i < hi) {
+    while (i < hi && isSpace(atoms[i]!)) i++;
+    if (i >= hi) break;
+    const s = i;
+    let depth = 0;
+    while (i < hi) {
+      const a = atoms[i]!;
+      if (a.kind === "code" && OPEN.has(a.ch)) depth++;
+      else if (a.kind === "code" && CLOSE.has(a.ch)) {
+        if (depth > 0) depth--;
+      } else if (depth === 0 && a.kind === "code" && isSpace(a)) break;
+      i++;
+    }
+    attrs.push([s, i]);
+  }
+  return attrs;
+}
+
+/**
+ * Lay out one JSX element `<Tag …>children</Tag>` (or `<Tag … />`). The element
+ * is one group: it stays inline when it fits, and when it doesn't, attributes
+ * break one per line, the `>` dedents, children indent, and the closing tag
+ * dedents — the shape a formatter produces. Children recurse: nested elements
+ * via this function, `{expr}` containers via {@link buildExpr}.
+ */
+function buildJsxElement(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc {
+  // Opening tag: `<` then the tag-name run, then attributes up to this tag's `>`.
+  let openGt = lo + 1;
+  let b = 0;
+  while (openGt < hi) {
+    const x = atoms[openGt]!;
+    if (x.kind === "code" && OPEN.has(x.ch)) b++;
+    else if (x.kind === "code" && CLOSE.has(x.ch)) {
+      if (b > 0) b--;
+    } else if (b === 0 && isTagPunct(x, ">")) break;
+    openGt++;
+  }
+  if (openGt >= hi) return { t: "text", atoms: atoms.slice(lo, hi) }; // malformed
+
+  let tagNameEnd = lo + 1;
+  while (tagNameEnd < openGt && atoms[tagNameEnd]!.role === "jsx-tag")
+    tagNameEnd++;
+
+  // Self-closing? (a `/` just before the `>`). `closerStart` is the `/` or `>`.
+  let beforeGt = openGt - 1;
+  while (beforeGt > lo && isSpace(atoms[beforeGt]!)) beforeGt--;
+  const selfClose = atoms[beforeGt]!.ch === "/";
+  const closerStart = selfClose ? beforeGt : openGt;
+  // Whitespace right before the closer (kept as the break point's flat text, so
+  // `<Tag a />` keeps its space and `<Tag a>` does not invent one).
+  let wsB = closerStart;
+  while (wsB > tagNameEnd && isSpace(atoms[wsB - 1]!)) wsB--;
+
+  const attrs = splitJsxAttrs(atoms, tagNameEnd, wsB);
+  // No attributes: keep the whole opening tag intact (`<List>`, `<br />`).
+  const openTag: Doc[] =
+    attrs.length === 0
+      ? [{ t: "text", atoms: atoms.slice(lo, openGt + 1) }]
+      : (() => {
+          const attrParts: Doc[] = [];
+          for (const [s, e] of attrs) {
+            attrParts.push({
+              t: "line",
+              flat: [{ ch: " ", kind: "code", role: "operand" }],
+            });
+            attrParts.push(buildExpr(atoms, s, e, indentUnit));
+          }
+          return [
+            { t: "text", atoms: atoms.slice(lo, tagNameEnd) },
+            { t: "nest", indent: indentUnit, doc: { t: "concat", parts: attrParts } },
+            { t: "line", flat: atoms.slice(wsB, closerStart) },
+            { t: "text", atoms: atoms.slice(closerStart, openGt + 1) },
+          ];
+        })();
+
+  if (selfClose) {
+    return openTag.length === 1
+      ? openTag[0]!
+      : { t: "group", doc: { t: "concat", parts: openTag } };
+  }
+
+  // Children + closing tag. The closing tag is the `</…>` ending at `hi-1`.
+  let closeStart = hi - 1;
+  while (closeStart > openGt && !isTagPunct(atoms[closeStart]!, "<")) closeStart--;
+  if (atoms[closeStart]!.ch !== "<") closeStart = openGt + 1; // malformed
+
+  const childParts = buildJsxChildren(atoms, openGt + 1, closeStart, indentUnit);
+  return {
+    t: "group",
+    doc: {
+      t: "concat",
+      parts: [
+        ...openTag,
+        { t: "nest", indent: indentUnit, doc: { t: "concat", parts: childParts } },
+        { t: "line", flat: [] },
+        { t: "text", atoms: atoms.slice(closeStart, hi) },
+      ],
+    },
+  };
+}
+
+/**
+ * Children of a JSX element. The block always opens on its own indented line
+ * (the leading break). Text runs stay literal and `{expr}` containers stay
+ * inline with the surrounding text (`Save {label}` stays together), while each
+ * nested *element* — block-level content — gets its own break so siblings stack.
+ */
+function buildJsxChildren(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc[] {
+  const parts: Doc[] = [{ t: "line", flat: [] }]; // children open on a new line
+  let i = lo;
+  let buf: Atom[] = [];
+  let firstUnit = true;
+  const flushText = () => {
+    if (buf.length) {
+      parts.push({ t: "text", atoms: buf });
+      buf = [];
+    }
+  };
+  while (i < hi) {
+    const a = atoms[i]!;
+    if (isTagPunct(a, "<")) {
+      flushText();
+      if (!firstUnit) parts.push({ t: "line", flat: [] });
+      const end = matchJsxElement(atoms, i, hi);
+      parts.push(buildJsxElement(atoms, i, end + 1, indentUnit));
+      firstUnit = false;
+      i = end + 1;
+      continue;
+    }
+    if (a.kind === "code" && a.ch === "{") {
+      flushText();
+      const close = matchClose(atoms, i, hi);
+      parts.push(buildBracket(atoms, i, close, indentUnit)); // inline expression
+      firstUnit = false;
+      i = close + 1;
+      continue;
+    }
+    if (!isSpace(a)) firstUnit = false;
+    buf.push(a);
+    i++;
+  }
+  flushText();
+  return parts;
+}
+
+/** Entry for a JSX expression: the element, plus any trailing text (e.g. `;`). */
+function buildJsx(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc {
+  const start = firstSignificant(atoms, lo, hi);
+  const elEnd = matchJsxElement(atoms, start, hi);
+  const parts: Doc[] = [];
+  if (start > lo) parts.push({ t: "text", atoms: atoms.slice(lo, start) });
+  parts.push(buildJsxElement(atoms, start, elEnd + 1, indentUnit));
+  if (elEnd + 1 < hi) parts.push({ t: "text", atoms: atoms.slice(elEnd + 1, hi) });
+  return parts.length === 1 ? parts[0]! : { t: "concat", parts };
+}
+
 /**
  * Comma- (and, in a `{}` block, semicolon-) separated items, each an expression
  * that breaks on its own. Used for the contents of a bracket group.
@@ -637,6 +921,10 @@ function buildItems(
     if (d !== 0) {
       depth = Math.max(0, depth + d);
       i++;
+      continue;
+    }
+    if (depth === 0 && isTagPunct(a, "<")) {
+      i = matchJsxElement(atoms, i, hi) + 1; // JSX child/value is one unit
       continue;
     }
     const isSep =
