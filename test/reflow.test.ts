@@ -11,8 +11,8 @@ async function toks(code: string): Promise<CodeToken[]> {
 }
 
 describe("reflowLine: chain reformatting", () => {
-  test("a line with nothing breakable is left untouched", async () => {
-    const t = await toks("const ok = a && b && c && d && e && f && g && h;");
+  test("a line with no operators or brackets is left untouched", async () => {
+    const t = await toks("const value = singleLongIdentifierWithNoBreakPoints;");
     const r = reflowLine(t, 10);
     expect(r.reflowed).toBe(false);
     expect(r.lines).toHaveLength(1);
@@ -41,14 +41,22 @@ describe("reflowLine: chain reformatting", () => {
     );
   });
 
-  test("property accesses split by an operator are NOT a chain", async () => {
-    // Two `.` accesses on different receivers, separated by `&&`/`>` — must not
-    // be reformatted as one chain (regression: this used to break before
-    // `.length` and `.active`).
+  test("property accesses split by an operator break by precedence, not as a chain", async () => {
+    // `.` accesses on different receivers, separated by `&&`/`>` — must break at
+    // the operators (one operand per line), not be reformatted as one member
+    // chain. Each `b.active`-style property access stays intact.
     const t = await toks(
       "const ok = a.length > 0 && b.active && c.ready && d.enabled;",
     );
-    expect(reflowLine(t, 10).reflowed).toBe(false);
+    expect(reflowToString(t, 18)).toBe(
+      [
+        "const ok =",
+        "  a.length > 0 &&",
+        "  b.active &&",
+        "  c.ready &&",
+        "  d.enabled;",
+      ].join("\n"),
+    );
   });
 
   test("an assignment prefix stays on the first line; only the chain breaks", async () => {
@@ -212,6 +220,79 @@ describe("reflowLine: argument hugging", () => {
     for (const width of [5, 10, 18, 22, 40, 500]) {
       const flattened = reflowToString(t, width).replace(/\s+/g, "");
       expect(flattened).toBe(code.replace(/\s+/g, ""));
+    }
+  });
+});
+
+describe("reflowLine: precedence-aware expression breaking", () => {
+  test("a logical chain breaks one operand per line under the =", async () => {
+    const t = await toks("const ok = aa && bb && cc && dd && ee;");
+    expect(reflowToString(t, 16)).toBe(
+      ["const ok =", "  aa &&", "  bb &&", "  cc &&", "  dd &&", "  ee;"].join("\n"),
+    );
+  });
+
+  test("multiplicative binds tighter than additive (only + breaks)", async () => {
+    const t = await toks("const v = aaa + bbb * ccc + ddd * eee;");
+    expect(reflowToString(t, 16)).toBe(
+      ["const v =", "  aaa +", "  bbb * ccc +", "  ddd * eee;"].join("\n"),
+    );
+  });
+
+  test("a ternary keeps its condition on the = line and stacks ? / :", async () => {
+    const t = await toks("const cls = isActive ? 'on-state' : 'off-state';");
+    expect(reflowToString(t, 22)).toBe(
+      ["const cls = isActive", "  ? 'on-state'", "  : 'off-state';"].join("\n"),
+    );
+  });
+
+  test("nested ternaries stair-step", async () => {
+    const t = await toks("const r = cond ? a : b ? c : d;");
+    expect(reflowToString(t, 12)).toBe(
+      ["const r = cond", "  ? a", "  : b", "    ? c", "    : d;"].join("\n"),
+    );
+  });
+
+  test("an if-condition breaks at && inside the parens, operands aligned", async () => {
+    const t = await toks("if (alpha && beta && gamma && delta) run();");
+    expect(reflowToString(t, 16)).toBe(
+      ["if (", "  alpha &&", "  beta &&", "  gamma &&", "  delta", ") run();"].join(
+        "\n",
+      ),
+    );
+  });
+
+  test("operators inside call arguments break per argument then per operator", async () => {
+    const t = await toks("call(aa && bb, cc || dd, ee ? ff : gg);");
+    expect(reflowToString(t, 14)).toBe(
+      ["call(", "  aa && bb,", "  cc || dd,", "  ee ? ff : gg", ");"].join("\n"),
+    );
+  });
+
+  test("precedence: ternary is the outer split, && lives in the condition", async () => {
+    const t = await toks("const m = ready && set ? doIt(x) : skip(y);");
+    expect(reflowToString(t, 22)).toBe(
+      ["const m = ready && set", "  ? doIt(x)", "  : skip(y);"].join("\n"),
+    );
+  });
+
+  test("a generic `<` is not a comparison: type args stay, the call breaks", async () => {
+    const t = await toks("const s = make<string, number>(seed);");
+    // The `<…>` is type punctuation, never split as `<` / `>` comparisons.
+    const out = reflowToString(t, 18);
+    expect(out).toContain("make<string, number>(");
+    expect(out.replace(/\s+/g, "")).toBe(
+      "const s = make<string, number>(seed);".replace(/\s+/g, ""),
+    );
+  });
+
+  test("never alters non-space characters across operator/ternary breaks", async () => {
+    const code = "const z = a && b ? c + d * e : fn(g, h) || i;";
+    const t = await toks(code);
+    for (const width of [6, 10, 14, 20, 30, 80, 500]) {
+      expect(reflowToString(t, width).replace(/\s+/g, "")).toBe(
+        code.replace(/\s+/g, ""),
+      );
     }
   });
 });
