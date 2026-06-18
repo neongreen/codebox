@@ -11,7 +11,71 @@
 export type TokenKind = "code" | "string" | "comment";
 
 const OPEN = new Set(["(", "[", "{"]);
+const CLOSE = new Set([")", "]", "}"]);
 const QUOTES = new Set(['"', "'", "`"]);
+
+/** First character of a member name (what a chain `.` must be followed by). */
+function isIdentStart(ch: string | undefined): boolean {
+  return ch !== undefined && /[A-Za-z_$]/.test(ch);
+}
+
+/** A character carrying only what chain detection needs. */
+export interface Cell {
+  ch: string;
+  kind: TokenKind;
+}
+
+/**
+ * Find the trailing method/property chain on a line, if any. A chain is a run
+ * of `.member` accesses (with their call/index brackets) on a single receiver —
+ * `a.b().c().d()`. The run must be *clean*: no other top-level operator (`&&`,
+ * `+`, `>`, `=`, `,`, a string literal, …) may sit between its links, or it
+ * isn't one chain. We take the maximal such run at the *end* of the line, so
+ * `const x = items.filter(f).map(g)` finds `items.filter(f).map(g)` (the
+ * assignment prefix is not part of it) while `a.length > 0 && b.active` finds
+ * nothing (the `&&` splits the two property accesses).
+ *
+ * Returns the index where the chain region starts and the indices of its dots,
+ * or null when there's no clean chain of at least two links.
+ */
+export function chainRegion(
+  cells: readonly Cell[],
+): { start: number; dots: number[] } | null {
+  let depth = 0;
+  let lastBoundary = -1; // last spot that breaks the chain spine
+  const dots: number[] = [];
+  for (let i = 0; i < cells.length; i++) {
+    const { ch, kind } = cells[i]!;
+    // A string/comment at top level is a value with operators around it, not
+    // part of a member spine — treat it as a boundary.
+    if (kind !== "code") {
+      if (depth === 0) lastBoundary = i;
+      continue;
+    }
+    if (OPEN.has(ch)) {
+      depth++;
+      continue;
+    }
+    if (CLOSE.has(ch)) {
+      if (depth > 0) depth--;
+      continue;
+    }
+    if (depth > 0) continue;
+    if (ch === "." && isIdentStart(cells[i + 1]?.ch)) {
+      dots.push(i);
+      continue;
+    }
+    // Spine-safe characters: identifiers, the dot itself, optional-chaining `?`,
+    // non-null `!`, a trailing `;`, and whitespace. Anything else is an operator
+    // that ends the trailing chain.
+    if (/[A-Za-z0-9_$.?!;]/.test(ch) || ch.trim() === "") continue;
+    lastBoundary = i;
+  }
+  const start = lastBoundary + 1;
+  const regionDots = dots.filter((d) => d > lastBoundary);
+  if (regionDots.length < 2) return null;
+  return { start, dots: regionDots };
+}
 
 /** Map a token's TextMate scope list to a coarse kind. */
 export function classifyScopes(scopes: readonly string[]): TokenKind {
@@ -107,6 +171,17 @@ export function computeLineLayout(
     }
   }
 
+  // Method/property chain: when a line ends in a clean run of `.member` calls
+  // on one receiver — `foo.bar().baz().qux()` — wrapped continuations should
+  // hang under the chain's *first* dot, so each `.method()` stacks under it the
+  // way a formatter would break it, rather than under the first call's args.
+  // `chainRegion` rejects false positives like `a.length > 0 && b.active` where
+  // an operator splits the dots, so this never fires on non-chains.
+  const region = chainRegion(chars);
+  const isChain = region !== null;
+  const firstChainDotIdx = region ? region.dots[0]! : -1;
+  const firstChainDotCol = region ? chars[firstChainDotIdx]!.col : -1;
+
   // First comment on the line (full-line or trailing).
   const firstCommentIdx = chars.findIndex((c) => c.kind === "comment");
   const firstComment =
@@ -158,6 +233,10 @@ export function computeLineLayout(
   } else if (stringContentCol !== undefined) {
     wrapIndent = stringContentCol;
     wrapIndentChars = stringBodyChars;
+  } else if (isChain) {
+    // Align under the first chain dot, so wrapped `.method()` calls stack.
+    wrapIndent = firstChainDotCol;
+    wrapIndentChars = firstChainDotIdx;
   } else if (firstOpenCol >= 0) {
     wrapIndent = firstOpenCol + 1;
     wrapIndentChars = firstOpenIdx + 1;

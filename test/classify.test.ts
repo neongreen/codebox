@@ -89,6 +89,54 @@ describe("computeLineLayout: wrap alignment", () => {
     }
   });
 
+  describe("method/property chains align under the first dot", () => {
+    test("chained calls anchor at the first chain dot, not the first call's args", () => {
+      // "a.b().c().d()" — chain dots at cols 1, 5, 9. The first '(' is at col 3,
+      // but a chain must hang under the first dot (col 1) so wrapped .method()
+      // calls stack, rather than under b()'s (empty) argument list.
+      const l = layout([{ content: "a.b().c().d()", kind: "code" }]);
+      expect(l.wrapIndent).toBe(1);
+      expect(l.wrapIndentChars).toBe(1);
+    });
+
+    test("receiver longer than one char: dot column reflects it", () => {
+      // "numbers.filter().map()" — first depth-0 dot after "numbers" at col 7.
+      const l = layout([{ content: "numbers.filter().map()", kind: "code" }]);
+      expect(l.wrapIndent).toBe(7);
+      expect(l.wrapIndentChars).toBe(7);
+    });
+
+    test("dots inside call arguments don't count (single call is not a chain)", () => {
+      // "obj.method(a.b, c.d)" — only one depth-0 dot (.method); the a.b / c.d
+      // dots are inside the parens. Falls through to the bracket rule: align
+      // under the first argument ('(' at col 10 -> col 11).
+      const l = layout([{ content: "obj.method(a.b, c.d)", kind: "code" }]);
+      expect(l.wrapIndent).toBe(11);
+    });
+
+    test("a numeric literal's point is not a chain dot", () => {
+      // "3.14 + foo.bar()" — the '.' in 3.14 is followed by a digit, so only
+      // .bar counts: one dot, not a chain. '(' anchors the wrap instead.
+      const l = layout([{ content: "3.14 + foo.bar()", kind: "code" }]);
+      const open = "3.14 + foo.bar".length; // index of '('
+      expect(l.wrapIndent).toBe(open + 1);
+    });
+
+    test("deep property access (no calls) still counts as a chain", () => {
+      // "this.state.items.value" — depth-0 dots at 4, 10, 16; first at col 4.
+      const l = layout([{ content: "this.state.items.value", kind: "code" }]);
+      expect(l.wrapIndent).toBe(4);
+      expect(l.wrapIndentChars).toBe(4);
+    });
+
+    test("optional chaining dots are detected", () => {
+      // "a?.b()?.c()" — the '.' in each '?.' sits at depth 0 (cols 2 and 7).
+      const l = layout([{ content: "a?.b()?.c()", kind: "code" }]);
+      expect(l.wrapIndent).toBe(2);
+      expect(l.wrapIndentChars).toBe(2);
+    });
+  });
+
   test("aligns string body under the opening quote", () => {
     // 'const x = "abc' — string starts at col 10, content at col 11
     const l = layout([
