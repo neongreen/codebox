@@ -416,3 +416,39 @@ describe("reflowLine: JSX", () => {
     }
   });
 });
+
+describe("reflowLine: template-literal interpolations", () => {
+  test("a compound interpolation breaks; literal parts and `$` stay attached", async () => {
+    const t = await toks("const u = `result: ${a + b + c + d} end`;");
+    expect(reflowToString(t, 18)).toBe(
+      ["const u = `result: ${", "  a + b + c + d", "} end`;"].join("\n"),
+    );
+  });
+
+  test("a ternary interpolation breaks as a ternary", async () => {
+    const t = await toks("const q = `u ${cond ? activeName : inactiveName} s`;");
+    expect(reflowToString(t, 22)).toBe(
+      ["const q = `u ${", "  cond", "    ? activeName", "    : inactiveName", "} s`;"].join(
+        "\n",
+      ),
+    );
+  });
+
+  test("simple interpolations stay inline (no break for `${count}`)", async () => {
+    const t = await toks("const m = `${count} of ${total} (${pct}%) done now`;");
+    // Nothing in any `${…}` is compound, so the line never breaks internally.
+    expect(reflowToString(t, 20)).toBe(
+      "const m = `${count} of ${total} (${pct}%) done now`;",
+    );
+  });
+
+  test("never alters non-space characters across interpolation breaks", async () => {
+    const code = "const w = `a ${x + y} b ${fn(p, q)} c ${cond ? m : n} d`;";
+    const t = await toks(code);
+    for (const width of [6, 12, 18, 26, 40, 500]) {
+      expect(reflowToString(t, width).replace(/\s+/g, "")).toBe(
+        code.replace(/\s+/g, ""),
+      );
+    }
+  });
+});

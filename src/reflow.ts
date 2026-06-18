@@ -1157,6 +1157,33 @@ function buildBracket(
  * {@link buildItems}; this is the leaf that lays out a primary's text and its
  * call/index brackets.
  */
+/** Is a template interpolation's content [lo,hi) worth breaking — i.e. does it
+ *  contain a top-level operator, ternary/arrow/assignment, comma, or a bracket
+ *  group? A bare identifier or member access is not, and stays inline. */
+function isCompoundInterp(atoms: Atom[], lo: number, hi: number): boolean {
+  const [s, e] = trimRange(atoms, lo, hi);
+  if (s >= e) return false;
+  if (topLevelBinaryOps(atoms, s, e).length > 0) return true;
+  if (
+    firstTopLevel(
+      atoms,
+      s,
+      e,
+      (a) =>
+        a.role === "op-ternary" ||
+        a.role === "arrow" ||
+        a.role === "op-assign" ||
+        a.role === "comma",
+    ) >= 0
+  )
+    return true;
+  for (let i = s; i < e; i++) {
+    const a = atoms[i]!;
+    if (a.kind === "code" && OPEN.has(a.ch)) return true;
+  }
+  return false;
+}
+
 function buildSeq(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc {
   const parts: Doc[] = [];
   let buf: Atom[] = [];
@@ -1172,6 +1199,20 @@ function buildSeq(atoms: Atom[], lo: number, hi: number, indentUnit: number): Do
     const a = atoms[i]!;
     if (a.kind === "code" && OPEN.has(a.ch)) {
       const close = matchClose(atoms, i, hi);
+      // A template-literal interpolation `${…}` (a code `{` right after a code
+      // `$`) only breaks when its expression is actually compound — a bare
+      // `${count}` or `${user.name}` stays inline rather than ballooning onto
+      // its own line.
+      const isInterp =
+        a.ch === "{" &&
+        i > lo &&
+        atoms[i - 1]!.kind === "code" &&
+        atoms[i - 1]!.ch === "$";
+      if (isInterp && !isCompoundInterp(atoms, i + 1, close)) {
+        for (let k = i; k <= close; k++) buf.push(atoms[k]!);
+        i = close + 1;
+        continue;
+      }
       flush();
       parts.push(buildBracket(atoms, i, close, indentUnit));
       i = close + 1;
