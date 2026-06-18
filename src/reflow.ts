@@ -122,17 +122,180 @@ function matchClose(atoms: Atom[], i: number, hi: number): number {
   return hi - 1;
 }
 
+/** Which separators become break points inside a region. Call/array contents
+ *  break on commas; `{}` block contents also break on statement `;`. */
+interface BreakOn {
+  comma: boolean;
+  semi: boolean;
+}
+
+/** True when `(…)` at `openIdx..close` is an arrow function's parameter list,
+ *  i.e. immediately followed (past whitespace) by `=>`. Such a list is kept as
+ *  flat header text rather than an independently-breakable group, so hugging a
+ *  callback never explodes its tiny parameter list one-per-line. */
+function isArrowParamList(
+  atoms: Atom[],
+  openIdx: number,
+  close: number,
+  hi: number,
+): boolean {
+  if (atoms[openIdx]!.ch !== "(") return false;
+  const c = atoms[close];
+  if (!c || c.ch !== ")" || c.kind !== "code") return false;
+  let k = close + 1;
+  while (k < hi && isSpace(atoms[k]!)) k++;
+  return (
+    k + 1 < hi &&
+    atoms[k]!.kind === "code" &&
+    atoms[k]!.ch === "=" &&
+    atoms[k + 1]!.ch === ">"
+  );
+}
+
+/** Index just past an optional arrow header `… =>` at the start of [lo,hi), or
+ *  `lo` when the region doesn't open with one. Used so a hugged callback keeps
+ *  `(args) =>` on the opening line. */
+function arrowHeaderEnd(atoms: Atom[], lo: number, hi: number): number {
+  let depth = 0;
+  for (let i = lo; i < hi - 1; i++) {
+    const a = atoms[i]!;
+    if (a.kind !== "code") continue;
+    if (OPEN.has(a.ch)) depth++;
+    else if (CLOSE.has(a.ch)) depth--;
+    else if (
+      depth === 0 &&
+      a.ch === "=" &&
+      atoms[i + 1]!.ch === ">" &&
+      atoms[i + 1]!.kind === "code"
+    ) {
+      let j = i + 2;
+      while (j < hi && isSpace(atoms[j]!)) j++;
+      return j;
+    }
+  }
+  return lo;
+}
+
+/**
+ * Build the doc for a single bracket group `atoms[openIdx..closeIdx]`,
+ * applying Prettier-style *hugging*: when a bracket's whole content is (after an
+ * optional `(args) =>` arrow header) a single nested bracket group that runs to
+ * the end, the brackets collapse onto shared lines — `map((r) => ({` … `}))`
+ * instead of stair-stepping each `(` and `{` onto its own deeper-indented line.
+ * Only the innermost group introduces an indent level and breaks its items.
+ */
+function buildBracket(
+  atoms: Atom[],
+  openIdx: number,
+  closeIdx: number,
+  indentUnit: number,
+): Doc {
+  const openersAtoms: Atom[] = []; // text that stays on the opening line
+  const closersAtoms: Atom[] = []; // closers for the last line, inner-first
+  const midTrail: Atom[] = []; // whitespace from hugged-over levels
+  let curOpen = openIdx;
+  let curClose = closeIdx;
+  let innerOpenChar = atoms[openIdx]!.ch;
+  let innerS = openIdx + 1;
+  let innerE = openIdx + 1;
+  let innerLead: Atom[] = [];
+  let innerTrail: Atom[] = [];
+  let hasInnerCloser = false;
+
+  while (true) {
+    const cAtom = atoms[curClose];
+    const cHas = !!cAtom && CLOSE.has(cAtom.ch) && cAtom.kind === "code";
+    openersAtoms.push(atoms[curOpen]!);
+    innerOpenChar = atoms[curOpen]!.ch;
+    // Content of this bracket, trimmed of the whitespace touching the brackets.
+    let s = curOpen + 1;
+    let e = cHas ? curClose : curClose + 1; // unmatched: content runs to the end
+    const lead: Atom[] = [];
+    while (s < e && isSpace(atoms[s]!)) lead.push(atoms[s++]!);
+    const trail: Atom[] = [];
+    while (e > s && isSpace(atoms[e - 1]!)) trail.unshift(atoms[--e]!);
+
+    // Empty bracket: nothing to break around, render as flat text.
+    if (s >= e) {
+      if (cHas) closersAtoms.unshift(cAtom!);
+      return {
+        t: "text",
+        atoms: [...openersAtoms, ...lead, ...trail, ...closersAtoms],
+      };
+    }
+
+    const h = arrowHeaderEnd(atoms, s, e);
+    const canHug =
+      cHas &&
+      h < e &&
+      atoms[h]!.kind === "code" &&
+      OPEN.has(atoms[h]!.ch) &&
+      atoms[e - 1]!.kind === "code" &&
+      CLOSE.has(atoms[e - 1]!.ch) &&
+      matchClose(atoms, h, e) === e - 1;
+
+    if (canHug) {
+      // Fold the opener + arrow header onto the opening line; descend into the
+      // single child bracket and try to hug it too.
+      closersAtoms.unshift(cAtom!);
+      openersAtoms.push(...lead, ...atoms.slice(s, h));
+      midTrail.unshift(...trail);
+      curOpen = h;
+      curClose = e - 1;
+      continue;
+    }
+
+    // Innermost breakable content reached. We do NOT fold an arrow header here:
+    // unlike the hug path, the content may have sibling items after the arrow
+    // body (e.g. `setTimeout(() => {…}, 1000)`), so the header stays part of the
+    // items and `buildSeq` keeps `(args) => {` together itself.
+    innerLead = lead;
+    innerS = s;
+    innerE = e;
+    innerTrail = trail;
+    hasInnerCloser = cHas;
+    if (cHas) closersAtoms.unshift(cAtom!);
+    break;
+  }
+
+  // `{}` is a block or object: break on `;` as well as `,`.
+  const items = buildSeq(atoms, innerS, innerE, indentUnit, {
+    comma: true,
+    semi: innerOpenChar === "{",
+  });
+  const inner: Doc = {
+    t: "nest",
+    indent: indentUnit,
+    doc: { t: "concat", parts: [{ t: "line", flat: innerLead }, items] },
+  };
+  const closeParts: Doc[] = hasInnerCloser
+    ? [
+        { t: "line", flat: innerTrail },
+        { t: "text", atoms: [...midTrail, ...closersAtoms] },
+      ]
+    : []; // unmatched: nothing to close with
+  return {
+    t: "concat",
+    parts: [
+      { t: "text", atoms: openersAtoms },
+      { t: "group", doc: { t: "concat", parts: [inner, ...closeParts] } },
+    ],
+  };
+}
+
 /**
  * Build a doc for a flat run of atoms, turning each bracket pair into a nested,
- * independently-breakable group. When `commaBreaks` is set, top-level commas
- * become break points too (argument lists). Chain dots are handled one level up.
+ * independently-breakable group (via {@link buildBracket}). `breakOn` selects
+ * which top-level separators become break points; chain dots are handled one
+ * level up. An arrow parameter list `(args) =>` is emitted as flat text so it
+ * never breaks one parameter per line.
  */
 function buildSeq(
   atoms: Atom[],
   lo: number,
   hi: number,
   indentUnit: number,
-  commaBreaks: boolean,
+  breakOn: BreakOn,
 ): Doc {
   const parts: Doc[] = [];
   let buf: Atom[] = [];
@@ -148,55 +311,35 @@ function buildSeq(
     const a = atoms[i]!;
     if (a.kind === "code" && OPEN.has(a.ch)) {
       const close = matchClose(atoms, i, hi);
-      buf.push(a); // the opening bracket stays attached to what precedes it
-      flush();
-      // Whitespace just inside the brackets rides along with the break points
-      // so it disappears cleanly when we break and is preserved when we don't.
-      let s = i + 1;
-      const leadWS: Atom[] = [];
-      while (s < close && isSpace(atoms[s]!)) leadWS.push(atoms[s++]!);
-      let e = close;
-      const trailWS: Atom[] = [];
-      while (e > s && isSpace(atoms[e - 1]!)) trailWS.unshift(atoms[--e]!);
-      const closeAtom = atoms[close];
-      // An empty (or whitespace-only) bracket has nothing to break around;
-      // emit it as plain text so an overflowing line can't explode `()` into
-      // three lines. Whitespace inside is preserved verbatim.
-      if (s >= e) {
-        const flat = [...leadWS, ...trailWS];
-        if (closeAtom && CLOSE.has(closeAtom.ch) && closeAtom.kind === "code")
-          flat.push(closeAtom);
-        buf.push(...flat);
-        flush();
+      if (isArrowParamList(atoms, i, close, hi)) {
+        // Keep the whole arrow parameter list flat on the line.
+        for (let k = i; k <= close; k++) buf.push(atoms[k]!);
         i = close + 1;
         continue;
       }
-      const inner = buildSeq(atoms, s, e, indentUnit, true);
-      const closeDoc: Doc[] =
-        closeAtom && CLOSE.has(closeAtom.ch) && closeAtom.kind === "code"
-          ? [{ t: "line", flat: trailWS }, { t: "text", atoms: [closeAtom] }]
-          : []; // unmatched: nothing to close with
-      parts.push({
-        t: "group",
-        doc: {
-          t: "concat",
-          parts: [
-            { t: "nest", indent: indentUnit, doc: { t: "concat", parts: [{ t: "line", flat: leadWS }, inner] } },
-            ...closeDoc,
-          ],
-        },
-      });
+      flush();
+      parts.push(buildBracket(atoms, i, close, indentUnit));
       i = close + 1;
       continue;
     }
 
-    if (commaBreaks && a.kind === "code" && a.ch === ",") {
+    if (
+      a.kind === "code" &&
+      ((breakOn.comma && a.ch === ",") || (breakOn.semi && a.ch === ";"))
+    ) {
       buf.push(a);
-      flush();
       const ws: Atom[] = [];
       let j = i + 1;
       while (j < hi && isSpace(atoms[j]!)) ws.push(atoms[j++]!);
-      parts.push({ t: "line", flat: ws });
+      // A separator with nothing after it (a trailing `,`/`;`) is not a break
+      // point — keep its whitespace inline so we never emit a blank last line.
+      if (j < hi) {
+        flush();
+        parts.push({ t: "line", flat: ws });
+      } else {
+        buf.push(...ws);
+        flush();
+      }
       i = j;
       continue;
     }
@@ -208,6 +351,8 @@ function buildSeq(
   return parts.length === 1 ? parts[0]! : { t: "concat", parts };
 }
 
+const NO_BREAKS: BreakOn = { comma: false, semi: false };
+
 /**
  * Build the doc for a chain line: any prefix before the chain (e.g. `const x =`)
  * stays put, then the chain is a group — head receiver, then each `.link` behind
@@ -217,14 +362,14 @@ function buildChain(atoms: Atom[], indentUnit: number): Doc | null {
   const region = chainRegion(atoms);
   if (!region) return null;
   const { start, dots } = region;
-  const prefix = buildSeq(atoms, 0, start, indentUnit, false);
-  const head = buildSeq(atoms, start, dots[0]!, indentUnit, false);
+  const prefix = buildSeq(atoms, 0, start, indentUnit, NO_BREAKS);
+  const head = buildSeq(atoms, start, dots[0]!, indentUnit, NO_BREAKS);
   const links: Doc[] = [];
   for (let d = 0; d < dots.length; d++) {
     const from = dots[d]!;
     const to = d + 1 < dots.length ? dots[d + 1]! : atoms.length;
     links.push({ t: "line", flat: [] });
-    links.push(buildSeq(atoms, from, to, indentUnit, false));
+    links.push(buildSeq(atoms, from, to, indentUnit, NO_BREAKS));
   }
   const chain: Doc = {
     t: "group",
@@ -363,7 +508,7 @@ export function reflowLine(
   // brackets (buildSeq turns each `(`/`[`/`{` group into a breakable group).
   const doc =
     buildChain(atoms, indentUnit) ??
-    buildSeq(atoms, 0, atoms.length, indentUnit, false);
+    buildSeq(atoms, 0, atoms.length, indentUnit, NO_BREAKS);
 
   const base = leadingWS(atoms);
   const outs = best(maxWidth, base, doc, measurer);

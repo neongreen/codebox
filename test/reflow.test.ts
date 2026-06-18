@@ -136,3 +136,82 @@ describe("reflowLine: chain reformatting", () => {
     );
   });
 });
+
+describe("reflowLine: argument hugging", () => {
+  test("a sole arrow returning an object hugs both brackets", async () => {
+    const t = await toks("rows.map((r) => ({ id: r.id, name: r.name, ok: r.ok }))");
+    expect(reflowToString(t, 22)).toBe(
+      [
+        "rows.map((r) => ({",
+        "  id: r.id,",
+        "  name: r.name,",
+        "  ok: r.ok",
+        "}))",
+      ].join("\n"),
+    );
+  });
+
+  test("a sole object argument hugs the call bracket", async () => {
+    const t = await toks("configure({ alpha: 1, beta: 2, gamma: 3, delta: 4 })");
+    expect(reflowToString(t, 20)).toBe(
+      [
+        "configure({",
+        "  alpha: 1,",
+        "  beta: 2,",
+        "  gamma: 3,",
+        "  delta: 4",
+        "})",
+      ].join("\n"),
+    );
+  });
+
+  test("a top-level arrow returning an object hugs (param list stays flat)", async () => {
+    const t = await toks("const f = (a, b, c) => ({ sum: a + b + c, product: a * b });");
+    expect(reflowToString(t, 24)).toBe(
+      [
+        "const f = (a, b, c) => ({",
+        "  sum: a + b + c,",
+        "  product: a * b",
+        "});",
+      ].join("\n"),
+    );
+  });
+
+  test("a hugged block body breaks one statement per line on `;`", async () => {
+    const t = await toks("items.forEach((item) => { process(item); log(item.id); })");
+    expect(reflowToString(t, 24)).toBe(
+      [
+        "items.forEach((item) => {",
+        "  process(item);",
+        "  log(item.id);",
+        "})",
+      ].join("\n"),
+    );
+  });
+
+  test("no hug when the callback is not the sole argument; header stays intact", async () => {
+    // `() => {…}` is one of two args, so the call breaks per-argument and the
+    // arrow header must NOT be left dangling as `() =>` on the opening line.
+    const t = await toks("setTimeout(() => { doSomething(); doMore(); }, 1000)");
+    expect(reflowToString(t, 24)).toBe(
+      [
+        "setTimeout(",
+        "  () => {",
+        "    doSomething();",
+        "    doMore();",
+        "  },",
+        "  1000",
+        ")",
+      ].join("\n"),
+    );
+  });
+
+  test("hugging still preserves every non-space character", async () => {
+    const code = "rows.map((r) => ({ id: r.id, name: r.name, ok: r.ok }))";
+    const t = await toks(code);
+    for (const width of [5, 10, 18, 22, 40, 500]) {
+      const flattened = reflowToString(t, width).replace(/\s+/g, "");
+      expect(flattened).toBe(code.replace(/\s+/g, ""));
+    }
+  });
+});
