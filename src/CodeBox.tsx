@@ -173,9 +173,19 @@ function useReflowMeasure(
         },
       };
 
-      const padL = parseFloat(cs.paddingLeft) || 0;
-      const padR = parseFloat(cs.paddingRight) || 0;
-      const maxWidthPx = Math.max(1, el.clientWidth - padL - padR);
+      // Budget = the width actually available to a line's *text*, not the whole
+      // codebox. A rendered line carries any per-line padding — most notably the
+      // line-number gutter (`.codebox--numbered .codebox__line`) — so measure a
+      // real line's content box when one exists. Measuring only the `<pre>` here
+      // would over-count by the gutter, and reflow would leave lines flat that
+      // then overflow and fall back to ugly CSS soft-wrapping. Fall back to the
+      // pre's own content box before the first line mounts.
+      const lineEl = el.querySelector<HTMLElement>(".codebox__line");
+      const box = lineEl ?? el;
+      const bs = box === el ? cs : getComputedStyle(box);
+      const padL = parseFloat(bs.paddingLeft) || 0;
+      const padR = parseFloat(bs.paddingRight) || 0;
+      const maxWidthPx = Math.max(1, box.clientWidth - padL - padR);
       setState({ maxWidthPx, measurer });
     };
 
