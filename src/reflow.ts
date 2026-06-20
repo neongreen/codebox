@@ -399,6 +399,27 @@ function isBinaryExpr(atoms: Atom[], lo: number, hi: number): boolean {
 }
 
 /**
+ * Build an expression for a position that supplies *no* indentation of its own —
+ * a whole-line statement, a ternary's condition, an arrow body. {@link
+ * buildBinary} deliberately lays its operands at the ambient indent and leans on
+ * an enclosing container (a bracket interior, or an assignment's broken
+ * right-hand side) to push them in by one level. Where there is no such
+ * container, that ambient indent *is* the statement start, so a broken chain
+ * would stack its operands flush under the first character and read like a run
+ * of new statements. Here we add the missing indent level so the rule "a
+ * continuation always sits past the statement start" holds. Only a bare binary
+ * chain needs it; chains self-indent and ternaries/brackets already nest, so
+ * everything else falls through to a plain {@link buildExpr}.
+ */
+function buildOperand(atoms: Atom[], lo: number, hi: number, indentUnit: number): Doc {
+  const doc = buildExpr(atoms, lo, hi, indentUnit);
+  if (isBinaryExpr(atoms, lo, hi)) {
+    return { t: "nest", indent: indentUnit, doc };
+  }
+  return doc;
+}
+
+/**
  * `lhs = rhs`. A member-chain/call/arrow/ternary right-hand side stays on the
  * `=` line and breaks internally (`const x = source\n  .filter(…)`,
  * `const c = cond\n  ? a\n  : b`). A bare operator-chain right-hand side instead
@@ -466,7 +487,8 @@ function buildArrow(
     t: "concat",
     parts: [
       { t: "text", atoms: atoms.slice(lo, bodyStart) },
-      buildExpr(atoms, bs, be, indentUnit),
+      // The body has no container, so a binary body indents its own operands.
+      buildOperand(atoms, bs, be, indentUnit),
     ],
   };
 }
@@ -527,7 +549,10 @@ function buildTernary(
   return {
     t: "concat",
     parts: [
-      buildExpr(atoms, cs, ce, indentUnit),
+      // The condition has no container of its own, so a binary condition must
+      // indent its broken operands itself (else they sit flush under the
+      // statement start, reading like new statements rather than the condition).
+      buildOperand(atoms, cs, ce, indentUnit),
       {
         t: "group",
         doc: {
@@ -1400,8 +1425,9 @@ export function reflowLine(
 ): ReflowResult {
   const atoms = toAtoms(tokens);
   // A chain reformats around its dots; anything else reflows around its
-  // brackets (buildSeq turns each `(`/`[`/`{` group into a breakable group).
-  const doc = buildExpr(atoms, 0, atoms.length, indentUnit);
+  // brackets (buildSeq turns each `(`/`[`/`{` group into a breakable group). A
+  // whole-line binary chain has no container, so it indents its own operands.
+  const doc = buildOperand(atoms, 0, atoms.length, indentUnit);
 
   const base = leadingWS(atoms);
   const outs = best(maxWidth, base, doc, measurer);

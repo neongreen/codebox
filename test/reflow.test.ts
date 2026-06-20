@@ -16,6 +16,33 @@ async function tsxToks(code: string): Promise<CodeToken[]> {
   return data.lines[0]!.tokens;
 }
 
+/** Leading-space count of a line. */
+function indentOf(line: string): number {
+  return /^ */.exec(line)![0].length;
+}
+
+/**
+ * Assert the core indentation rule for a reflowed block: every continuation
+ * visual line that carries statement *content* must be indented strictly more
+ * than the statement's first line. Lines that merely close a structure — they
+ * begin with `)`, `]` or `}` — are allowed to dedent back to (but never past)
+ * the opener's indent, the way every formatter lines a closer up under its
+ * statement. Returns the offending lines (empty when the rule holds).
+ */
+function indentRuleViolations(block: string): string[] {
+  const lines = block.split("\n");
+  const base = indentOf(lines[0]!);
+  const bad: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.trim() === "") continue;
+    const isCloser = /^[)\]}]/.test(line.trim());
+    const ind = indentOf(line);
+    if (isCloser ? ind < base : ind <= base) bad.push(line);
+  }
+  return bad;
+}
+
 describe("reflowLine: chain reformatting", () => {
   test("a line with no operators or brackets is left untouched", async () => {
     const t = await toks("const value = singleLongIdentifierWithNoBreakPoints;");
@@ -449,6 +476,86 @@ describe("reflowLine: template-literal interpolations", () => {
       expect(reflowToString(t, width).replace(/\s+/g, "")).toBe(
         code.replace(/\s+/g, ""),
       );
+    }
+  });
+});
+
+describe("reflowLine: continuation never sits at the statement start", () => {
+  // The invariant: when a statement breaks, its continuation lines must hang
+  // *past* the column where the statement began — otherwise a wrapped operand
+  // reads like a brand-new statement. (Closing `)`/`]`/`}` lines are exempt:
+  // those dedent back under the opener, as every formatter writes them.)
+
+  test("a ternary whose condition is a binary chain keeps the operands indented", async () => {
+    // The reported bug: `'string'` / `typeof …` landed flush under `const`.
+    const t = await toks(
+      "  const text = input && typeof input.text === 'string' ? input.text : '';",
+    );
+    for (const width of [16, 20, 24, 30, 36, 44]) {
+      const out = reflowToString(t, width);
+      expect(indentRuleViolations(out)).toEqual([]);
+    }
+  });
+
+  test("exact shape of the broken ternary-with-binary-condition", async () => {
+    const t = await toks(
+      "  const text = input && typeof input.text === 'string' ? input.text : '';",
+    );
+    expect(reflowToString(t, 36)).toBe(
+      [
+        "  const text = input &&",
+        "    typeof input.text === 'string'",
+        "    ? input.text",
+        "    : '';",
+      ].join("\n"),
+    );
+  });
+
+  test("a bare logical expression statement indents its continuations", async () => {
+    const t = await toks("foo && bar && baz && qux && quux;");
+    const out = reflowToString(t, 14);
+    expect(indentRuleViolations(out)).toEqual([]);
+    expect(out).toBe(
+      ["foo &&", "  bar &&", "  baz &&", "  qux &&", "  quux;"].join("\n"),
+    );
+  });
+
+  test("a returned logical chain indents its continuations", async () => {
+    const t = await toks("return aaaa && bbbb && cccc && dddd && eeee;");
+    const out = reflowToString(t, 18);
+    expect(indentRuleViolations(out)).toEqual([]);
+  });
+
+  test("an arrow body that is a binary chain indents its continuations", async () => {
+    const t = await toks("const f = x => aaaa && bbbb && cccc && dddd;");
+    const out = reflowToString(t, 20);
+    expect(indentRuleViolations(out)).toEqual([]);
+  });
+
+  test("the rule holds across a battery of statements and widths", async () => {
+    const samples = [
+      "  const text = input && typeof input.text === 'string' ? input.text : '';",
+      "const ok = aaaa && bbbb && cccc && dddd;",
+      "const v = aaa + bbb * ccc + ddd * eee + fff;",
+      "if (alpha && beta && gamma && delta) run();",
+      "const m = ready && set ? doIt(x) : skip(y);",
+      "const r = cond ? aaa : bbb ? ccc : ddd;",
+      "return aaaa && bbbb && cccc && dddd && eeee;",
+      "const f = x => aaaa && bbbb && cccc && dddd;",
+      "const reversed = cleaned.split('').reverse().join('');",
+      "foo && bar && baz && qux && quux;",
+    ];
+    for (const code of samples) {
+      const t = await toks(code);
+      for (const width of [10, 12, 16, 20, 24, 30, 36, 44, 60]) {
+        const out = reflowToString(t, width);
+        const bad = indentRuleViolations(out);
+        if (bad.length) {
+          throw new Error(
+            `rule broken for ${JSON.stringify(code)} @ width ${width}:\n${out}`,
+          );
+        }
+      }
     }
   });
 });
